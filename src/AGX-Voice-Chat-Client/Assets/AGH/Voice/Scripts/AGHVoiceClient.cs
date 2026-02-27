@@ -68,20 +68,12 @@ namespace AGH.Voice.Scripts
         /// </summary>
         private void RegisterTypes()
         {
+            // Same order as server: Vector2, Vector3, then packets (no extra types or hashes will mismatch).
             _packetProcessor.RegisterNestedType(
-                (w, v) =>
-                {
-                    w.Put(v.x);
-                    w.Put(v.y);
-                },
+                (w, v) => { w.Put(v.x); w.Put(v.y); },
                 r => new Vector2(r.GetFloat(), r.GetFloat()));
             _packetProcessor.RegisterNestedType(
-                (w, v) =>
-                {
-                    w.Put(v.x);
-                    w.Put(v.y);
-                    w.Put(v.z);
-                },
+                (w, v) => { w.Put(v.x); w.Put(v.y); w.Put(v.z); },
                 r => new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat()));
 
             RegisterNested<JoinRequestPacket>();
