@@ -166,7 +166,7 @@ namespace AGX_Voice_Chat_Server
             foreach (var peer in _peers.Keys)
             {
                 var writer = new NetDataWriter();
-                _packetProcessor.Write(writer, snapshot);
+                _packetProcessor.WriteNetSerializable(writer, ref snapshot);
                 if (writer.Length > 800)
                     Log.Warning("Large snapshot packet: {Size} bytes (Players: {PlayerCount})", writer.Length, snapshot.Players.Length);
                 peer.Send(writer, DeliveryMethod.ReliableSequenced);
@@ -209,7 +209,7 @@ namespace AGX_Voice_Chat_Server
             };
 
             var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, response);
+            _packetProcessor.WriteNetSerializable(writer, ref response);
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
 
             BroadcastPlayerInfo(playerId, packet.PlayerName, 100);
@@ -229,7 +229,7 @@ namespace AGX_Voice_Chat_Server
             };
 
             var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, playerInfo);
+            _packetProcessor.WriteNetSerializable(writer, ref playerInfo);
 
             foreach (var peer in _peers.Keys)
             {
@@ -249,7 +249,7 @@ namespace AGX_Voice_Chat_Server
         {
             var pong = new PongPacket { Timestamp = packet.Timestamp };
             var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, pong);
+            _packetProcessor.WriteNetSerializable(writer, ref pong);
             peer.Send(writer, DeliveryMethod.Unreliable);
         }
 
