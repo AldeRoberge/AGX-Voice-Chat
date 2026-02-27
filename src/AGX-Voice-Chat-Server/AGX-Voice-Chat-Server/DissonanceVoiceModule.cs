@@ -14,18 +14,15 @@ namespace AGX_Voice_Chat_Server
     /// Responds to HandshakeRequest so Dissonance clients reach Connected; does not relay server-only message types.
     /// Owns all voice transport logic (peer lookup, send to peer/target, metrics).
     /// </summary>
-    public class DissonanceVoiceModule
+    public class DissonanceVoiceModule(
+        NetPacketProcessor packetProcessor,
+        IReadOnlyDictionary<NetPeer, Guid> peerToPlayerId,
+        ServerMetrics metrics
+    )
     {
-        private readonly NetPacketProcessor _packetProcessor;
-        private readonly IReadOnlyDictionary<NetPeer, Guid> _peerToPlayerId;
-        private readonly ServerMetrics _metrics;
-
-        public DissonanceVoiceModule(NetPacketProcessor packetProcessor, IReadOnlyDictionary<NetPeer, Guid> peerToPlayerId, ServerMetrics metrics)
-        {
-            _packetProcessor = packetProcessor ?? throw new ArgumentNullException(nameof(packetProcessor));
-            _peerToPlayerId = peerToPlayerId ?? throw new ArgumentNullException(nameof(peerToPlayerId));
-            _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
-        }
+        private readonly NetPacketProcessor _packetProcessor = packetProcessor ?? throw new ArgumentNullException(nameof(packetProcessor));
+        private readonly IReadOnlyDictionary<NetPeer, Guid> _peerToPlayerId = peerToPlayerId ?? throw new ArgumentNullException(nameof(peerToPlayerId));
+        private readonly ServerMetrics _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
 
         private bool TryGetPlayerId(NetPeer peer, out Guid playerId) =>
             _peerToPlayerId.TryGetValue(peer, out playerId);
@@ -57,6 +54,7 @@ namespace AGX_Voice_Chat_Server
                 return;
             SendVoiceFromTo(peer, fromPlayerId, data, reliable);
         }
+
         // Dissonance MessageTypes (byte) - MUST match Unity Dissonance.Networking.MessageTypes exactly
         private const byte ClientState = 1;
         private const byte VoiceData = 2;
@@ -76,20 +74,20 @@ namespace AGX_Voice_Chat_Server
         // Session management
         private readonly uint _sessionId = GenerateSessionId();
         private ushort _nextClientId = 1;
-        
+
         // Client ID mappings
         private readonly Dictionary<Guid, ushort> _dissonanceClientIds = new();
         private readonly Dictionary<ushort, Guid> _clientIdToPlayerId = new();
-        
+
         // Client metadata
         private readonly Dictionary<ushort, ClientMetadata> _clientMetadata = new();
-        
+
         // Room membership tracking (clientId -> set of room names)
         private readonly Dictionary<ushort, HashSet<string>> _clientRooms = new();
-        
+
         // Room tracking (room name -> set of client IDs listening)
         private readonly Dictionary<string, HashSet<ushort>> _roomListeners = new();
-        
+
         /// <summary>
         /// Client metadata stored during handshake
         /// </summary>
@@ -98,7 +96,7 @@ namespace AGX_Voice_Chat_Server
             public string Name { get; set; } = string.Empty;
             public byte[] CodecSettings { get; set; } = Array.Empty<byte>();
         }
-        
+
         /// <summary>
         /// Generate a random session ID (per Dissonance spec)
         /// </summary>
@@ -107,7 +105,7 @@ namespace AGX_Voice_Chat_Server
             var random = new Random();
             return (uint)random.Next(1, int.MaxValue);
         }
-        
+
         /// <summary>
         /// Compute Dissonance room ID from room name (simple hash to 16-bit)
         /// Dissonance uses ToRoomId method - we implement a compatible hash
@@ -116,13 +114,14 @@ namespace AGX_Voice_Chat_Server
         {
             if (string.IsNullOrEmpty(roomName))
                 return 0;
-            
+
             // Simple hash matching Dissonance behavior
             uint hash = 0;
             foreach (var c in roomName)
             {
                 hash = ((hash << 5) + hash) + c;
             }
+
             return (ushort)(hash & 0xFFFF);
         }
 
@@ -243,11 +242,13 @@ namespace AGX_Voice_Chat_Server
         private byte[] BuildHandshakeResponse(uint session, ushort clientId)
         {
             var list = new List<byte>();
+
             void WriteUInt16(ushort u)
             {
                 list.Add((byte)(u >> 8));
                 list.Add((byte)(u & 0xFF));
             }
+
             void WriteString(string s)
             {
                 if (string.IsNullOrEmpty(s))
@@ -255,6 +256,7 @@ namespace AGX_Voice_Chat_Server
                     WriteUInt16(0);
                     return;
                 }
+
                 var utf8 = Encoding.UTF8.GetBytes(s);
                 WriteUInt16((ushort)(utf8.Length + 1));
                 list.AddRange(utf8);
@@ -287,6 +289,7 @@ namespace AGX_Voice_Chat_Server
                 if (codec != null && codec.Length >= 9)
                     list.AddRange(codec);
             }
+
             WriteUInt16(0); // room name count
             WriteUInt16(0); // channel count
             return list.ToArray();
@@ -310,7 +313,7 @@ namespace AGX_Voice_Chat_Server
             buf[8] = (byte)((_sessionId >> 16) & 0xFF);
             buf[9] = (byte)((_sessionId >> 8) & 0xFF);
             buf[10] = (byte)(_sessionId & 0xFF);
-            
+
             SendVoiceFromTo(peer, Guid.Empty, buf, true);
             Log.Warning("Sent ErrorWrongSession to peer {Address}", peer.Address);
         }
@@ -333,13 +336,13 @@ namespace AGX_Voice_Chat_Server
             }
 
             var clientId = (ushort)((data[7] << 8) | data[8]);
-            
+
             // Simple parsing: we don't fully decode name/codec here, just track room memberships
             // The client tells us which rooms they're listening to
             // For now, we'll log receipt and broadcast to other clients
-            
+
             Log.Information("Received ClientState from clientId {ClientId}", clientId);
-            
+
             // Broadcast ClientState to all other clients for state synchronization
             BroadcastToOthers(fromPeer, data, true);
         }
@@ -364,12 +367,12 @@ namespace AGX_Voice_Chat_Server
             var flags = data[7];
             var joining = (flags & 0x01) != 0;
             var clientId = (ushort)((data[8] << 8) | data[9]);
-            
+
             // Room name is at data[10] onwards (length-prefixed string in Dissonance format)
             // For simplicity, we'll just log and broadcast
-            
+
             Log.Information("Received DeltaClientState from clientId {ClientId}, joining: {Joining}", clientId, joining);
-            
+
             // Broadcast DeltaClientState to all other clients for state synchronization
             BroadcastToOthers(fromPeer, data, true);
         }
@@ -394,10 +397,10 @@ namespace AGX_Voice_Chat_Server
             var recipientType = data[7]; // 0 = player, 1 = room
             var senderId = (ushort)((data[8] << 8) | data[9]);
             var recipientId = (ushort)((data[10] << 8) | data[11]);
-            
-            Log.Information("Received TextData from clientId {SenderId} to recipientId {RecipientId}, type {Type}", 
+
+            Log.Information("Received TextData from clientId {SenderId} to recipientId {RecipientId}, type {Type}",
                 senderId, recipientId, recipientType);
-            
+
             if (recipientType == 0)
             {
                 // Send to specific player
@@ -442,7 +445,7 @@ namespace AGX_Voice_Chat_Server
             if (!_dissonanceClientIds.TryGetValue(playerId, out var clientId))
                 return;
 
-            Log.Information("Client {PlayerId} (Dissonance ID {ClientId}) disconnected, broadcasting RemoveClient", 
+            Log.Information("Client {PlayerId} (Dissonance ID {ClientId}) disconnected, broadcasting RemoveClient",
                 playerId, clientId);
 
             // Build RemoveClient packet
@@ -477,7 +480,7 @@ namespace AGX_Voice_Chat_Server
             _dissonanceClientIds.Remove(playerId);
             _clientIdToPlayerId.Remove(clientId);
             _clientMetadata.Remove(clientId);
-            
+
             if (_clientRooms.TryGetValue(clientId, out var rooms))
             {
                 foreach (var room in rooms)
@@ -489,6 +492,7 @@ namespace AGX_Voice_Chat_Server
                             _roomListeners.Remove(room);
                     }
                 }
+
                 _clientRooms.Remove(clientId);
             }
 

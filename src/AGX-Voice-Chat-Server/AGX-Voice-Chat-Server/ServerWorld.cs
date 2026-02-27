@@ -1,6 +1,5 @@
 using System.Numerics;
 using AGH.Shared;
-using AGH.Shared.Items;
 using Friflo.Engine.ECS;
 using Serilog;
 using static AGH_VOice_Chat_Client.LoggingConfig;
@@ -8,87 +7,21 @@ using static AGH_VOice_Chat_Client.LoggingConfig;
 namespace AGX_Voice_Chat_Server
 {
     /// <summary>
-    /// Server-authoritative world simulation.
-    /// Processes inputs strictly per-tick, spawns/simulates projectiles, and handles collisions.
+    /// Server-authoritative world simulation for the voice chat demo.
+    /// Handles: player connect, movement (walk/jump/dash), and Dissonance room changes (in DissonanceVoiceModule).
     /// </summary>
     public class ServerWorld
     {
         private readonly EntityStore _world = new();
         private uint _currentTick;
-        private uint _nextProjectileId = 1;
         private int _ticksSinceSnapshot;
-        public ChunkManager ChunkManager { get; private set; }
-        public List<Guid> PlayersToRespawn { get; private set; } = new();
+        public List<Guid> PlayersToRespawn { get; } = new();
 
-        // Status effect changes that occurred this tick (to be broadcast)
+        /// <summary>Flat terrain: constant ground level.</summary>
+        public static float GetTerrainHeight(float worldX, float worldY) => SimulationConfig.GroundLevel;
 
-        public List<(Guid playerId, List<StatEffectType> effects)> StatusEffectChanges { get; private set; } = new();
-
-        // Event for block changes (chunkX, chunkY, chunkZ, localX, localY, localZ, exists, health)
-        public event Action<int, int, int, int, int, int, bool, byte> OnBlockChanged = delegate { };
-
-        // Track damage to blocks: stored in VoxelChunk.BlockHealth
-        // private Dictionary<(int, int, int), int> _blockDamage = new();
-        private const int DamagePerHit = 34; // destroy in 3 hits
-
-        public ServerWorld()
-        {
-            ChunkManager = new ChunkManager();
-            SpawnRandomBoxes();
-        }
-
-        private void SpawnRandomBoxes()
-        {
-            var random = new Random();
-            uint boxId = 1000;
-
-            // Spawn 5 horizontal lines of 3 cubes each (15 total cubes)
-
-            for (int line = 0; line < 5; line++)
-            {
-                // Random starting position within world bounds (conservative)
-                var startX = (float)(random.NextDouble() * (SimulationConfig.WorldWidth - 300) - (SimulationConfig.WorldWidth / 2 - 150));
-                var startY = (float)(random.NextDouble() * (SimulationConfig.WorldHeight - 300) - (SimulationConfig.WorldHeight / 2 - 150));
-
-                // Random direction for the line (0 = horizontal/X-axis, 1 = vertical/Y-axis)
-
-                var direction = random.Next(2);
-
-                // Spawn 3 cubes in a line on the ground
-
-                for (int i = 0; i < 3; i++)
-                {
-                    // Position cubes in a line with BoxSize spacing
-                    float x, y;
-                    if (direction == 0)
-                    {
-                        // Horizontal line along X-axis
-                        x = startX + i * SimulationConfig.BoxSize;
-                        y = startY;
-                    }
-                    else
-                    {
-                        // Horizontal line along Y-axis
-                        x = startX;
-                        y = startY + i * SimulationConfig.BoxSize;
-                    }
-
-                    // All cubes sit on ground level
-
-                    var z = SimulationConfig.BoxSize / 2f;
-
-                    var entity = _world.CreateEntity();
-                    entity.AddComponent(new BoxComponent { Id = boxId });
-                    entity.AddComponent(new PositionComponent { Value = new Vector3(x, y, z) });
-
-                    Log.Information($"Spawned box {boxId} at {x:F1}, {y:F1}, {z:F1} (line {line}, position {i}, direction {(direction == 0 ? "X" : "Y")})");
-                    boxId++;
-                }
-            }
-        }
-
-        // Limit max projectiles to prevent packet size issues
-        private const int MaxProjectiles = 100;
+        /// <summary>Flat terrain: no solid blocks.</summary>
+        public static bool HasSolidBlockAtPosition(float worldX, float worldY, float worldZ = 0) => false;
 
         public uint CurrentTick => _currentTick;
 
@@ -107,18 +40,8 @@ namespace AGX_Voice_Chat_Server
             entity.AddComponent(new HealthComponentWrapper { Health = new HealthComponent(100, 100) });
             entity.AddComponent(new LastProcessedInputComponent { Tick = _currentTick });
             entity.AddComponent(new InputQueueComponent { Queue = [] });
-            entity.AddComponent(new LastFireTickComponent { Tick = 0 });
 
-            // Add inventory with default loadout
-
-            entity.AddComponent(new InventoryComponentWrapper { Inventory = InventoryComponent.CreateDefaultLoadout() });
-            entity.AddComponent(new ItemCooldownsComponent { LastUseTicks = new Dictionary<ItemType, uint>() });
-
-            // Add status effect tracking (server is authoritative)
-
-            entity.AddComponent(new StatusEffectComponent { ActiveEffects = new List<StatEffectType>() });
-
-            Log.Information("Player {PlayerName} ({PlayerId}) spawned at ({X:F1}, {Y:F1}, {Z:F1}) with default inventory",
+            Log.Information("Player {PlayerName} ({PlayerId}) spawned at ({X:F1}, {Y:F1}, {Z:F1})",
                 playerName, playerId, spawnPos.X, spawnPos.Y, spawnPos.Z);
         }
 
@@ -144,9 +67,7 @@ namespace AGX_Voice_Chat_Server
             float spawnX = (float)(random.NextDouble() * 200 - 100);
             float spawnY = (float)(random.NextDouble() * 200 - 100);
 
-            // Get terrain height at this position and spawn above it
-
-            float terrainHeight = ChunkManager.GetTerrainHeight(spawnX, spawnY);
+            float terrainHeight = GetTerrainHeight(spawnX, spawnY);
             float spawnZ = terrainHeight + 10f; // Spawn 10 units above terrain
 
 
@@ -216,42 +137,20 @@ namespace AGX_Voice_Chat_Server
         }
 
         /// <summary>
-        /// Main simulation tick.
-        /// Processes inputs, simulates physics, handles projectiles, and detects hits.
+        /// Main simulation tick. Processes player inputs and movement only.
         /// </summary>
         public void Tick(float deltaTime)
         {
             _currentTick++;
             _ticksSinceSnapshot++;
 
-            // Clear status effect changes from last tick
-
-            StatusEffectChanges.Clear();
-
-            // Debug output every 2 seconds
             if (_currentTick % (SimulationConfig.ServerTickRate * 2) == 0)
             {
                 var playerCount = _world.Query<IdComponent>().Count;
-                var projectileCount = _world.Query<ProjectileComponent>().Count;
-                Log.Debug("Tick {Tick} | Players: {PlayerCount} | Projectiles: {ProjectileCount}",
-                    _currentTick, playerCount, projectileCount);
+                Log.Debug("Tick {Tick} | Players: {PlayerCount}", _currentTick, playerCount);
             }
 
-            // 1. Process player inputs
             ProcessPlayerInputs(deltaTime);
-
-            // 2. Simulate projectiles
-            SimulateProjectiles(deltaTime);
-
-            // 3. Detect hits (projectile vs player)
-            DetectHits();
-
-            // Debug: Log projectile count after each tick if any exist
-            var projCountAfterTick = _world.Query<ProjectileComponent>().Count;
-            if (projCountAfterTick > 0)
-            {
-                ProjectileLog.Debug($"[SERVER] After tick {_currentTick}: {projCountAfterTick} projectiles alive");
-            }
         }
 
         /// <summary>
@@ -263,40 +162,19 @@ namespace AGX_Voice_Chat_Server
             var playerQuery = _world.Query<IdComponent, PositionComponent, VelocityComponent,
                 RotationComponent, LastProcessedInputComponent>();
 
-            // Collect box positions for collision
-            var boxQuery = _world.Query<BoxComponent, PositionComponent>();
-            var boxPositions = new List<Vector3>();
-            boxQuery.ForEachEntity((ref BoxComponent box, ref PositionComponent pos, Entity entity) => { boxPositions.Add(pos.Value); });
-
-
-            // Collect spawn requests and component updates to avoid structural changes during iteration
-            var spawnRequests = new List<(Guid owner, Vector3 pos, float rot)>();
-            var fireTickUpdates = new List<(Entity entity, LastFireTickComponent component)>();
+            var boxPositions = new List<Vector3>(); // No boxes in demo
             var visualRotationUpdates = new List<(Entity entity, float rotation)>();
 
             playerQuery.ForEachEntity((ref IdComponent id, ref PositionComponent pos,
                 ref VelocityComponent vel, ref RotationComponent rot,
                 ref LastProcessedInputComponent lastProcessed, Entity entity) =>
             {
-                // Get input queue separately to avoid 5-component query limit
                 if (!entity.TryGetComponent<InputQueueComponent>(out var inputQueue)) return;
-
-                // Get last fire tick for cooldown enforcement
-                if (!entity.TryGetComponent<LastFireTickComponent>(out var lastFireTick))
-                {
-                    lastFireTick = new LastFireTickComponent { Tick = 0 };
-                }
 
                 var queue = inputQueue.Queue;
 
-                // CRITICAL: Apply gravity ONCE per tick, not per input
-                // But check for climbing first
+                // Flat terrain: no blocks (no climbing)
                 bool isClimbing = false;
-                if (ChunkManager.HasBlockAtPosition(pos.Value.X, pos.Value.Y, pos.Value.Z))
-                {
-                    var block = ChunkManager.GetBlockTypeAtPosition(pos.Value.X, pos.Value.Y, pos.Value.Z);
-                    if (block == VoxelType.Ladder) isClimbing = true;
-                }
 
                 // This ensures gravity is deterministic regardless of how many inputs we process
                 PhysicsSimulation.ApplyGravity(ref vel.Value, SimulationConfig.FixedDeltaTime, isClimbing);
@@ -339,8 +217,7 @@ namespace AGX_Voice_Chat_Server
                     // Process this input
                     queue.RemoveAt(0);
 
-                    // Check if grounded and apply jump if requested
-                    var isGrounded = PhysicsSimulation.IsGrounded(pos.Value.Z, pos.Value, boxPositions, (x, y) => ChunkManager.GetTerrainHeight(x, y));
+                    var isGrounded = PhysicsSimulation.IsGrounded(pos.Value.Z, pos.Value, boxPositions, (x, y) => GetTerrainHeight(x, y));
                     if (nextInput.Jump)
                     {
                         Log.Debug("[JUMP DEBUG] Player {Id} jump input at tick {Tick}, grounded={Grounded}, Z={Z:F2}, VelZ before={VelZ:F2}",
@@ -382,7 +259,7 @@ namespace AGX_Voice_Chat_Server
                             SimulationConfig.FixedDeltaTime,
                             SimulationConfig.PlayerRadius,
                             boxPositions,
-                            (x, y, z) => ChunkManager.HasSolidBlockAtPosition(x, y, z));
+                            (x, y, z) => HasSolidBlockAtPosition(x, y, z));
 
                         // Log new position
                         InputLog.Debug($"[SERVER] Player {id.Value} dash result pos: {pos.Value}");
@@ -426,12 +303,11 @@ namespace AGX_Voice_Chat_Server
                         SimulationConfig.FixedDeltaTime,
                         SimulationConfig.PlayerRadius,
                         boxPositions,
-                        (x, y, z) => ChunkManager.HasSolidBlockAtPosition(x, y, z));
+                        (x, y, z) => HasSolidBlockAtPosition(x, y, z));
 
-                    // Clamp to ground if below
                     var zBeforeClamp = pos.Value.Z;
                     var velZBeforeClamp = vel.Value.Z;
-                    PhysicsSimulation.ClampToGround(ref pos.Value, ref vel.Value, boxPositions, (x, y) => ChunkManager.GetTerrainHeight(x, y), previousPosition: positionBeforeMovement);
+                    PhysicsSimulation.ClampToGround(ref pos.Value, ref vel.Value, boxPositions, (x, y) => GetTerrainHeight(x, y), previousPosition: positionBeforeMovement);
 
                     // DEBUG: Log if clamping occurred
 
@@ -450,90 +326,11 @@ namespace AGX_Voice_Chat_Server
                         PlayersToRespawn.Add(id.Value);
                     }
 
-                    // Check for status effect changes based on current position
-                    var statusEffect = entity.GetComponent<StatusEffectComponent>();
-                    var newEffects = new List<StatEffectType>();
-
-                    // Check if player is in a special block (water, ladder, etc.)
-
-                    if (ChunkManager.HasBlockAtPosition(pos.Value.X, pos.Value.Y, pos.Value.Z))
-                    {
-                        var blockType = ChunkManager.GetBlockTypeAtPosition(pos.Value.X, pos.Value.Y, pos.Value.Z);
-                        switch (blockType)
-                        {
-                            case VoxelType.Water:
-                                newEffects.Add(StatEffectType.Swimming);
-                                break;
-                            case VoxelType.Ladder:
-                                newEffects.Add(StatEffectType.Climbing);
-                                break;
-                        }
-                    }
-
-                    // Check if effects changed
-
-                    bool effectsChanged = false;
-                    if (statusEffect.ActiveEffects == null || statusEffect.ActiveEffects.Count != newEffects.Count)
-                    {
-                        effectsChanged = true;
-                    }
-                    else
-                    {
-                        // Compare lists
-                        for (int i = 0; i < newEffects.Count; i++)
-                        {
-                            if (!statusEffect.ActiveEffects.Contains(newEffects[i]))
-                            {
-                                effectsChanged = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (effectsChanged)
-                    {
-                        // Directly modify the List (it's a reference type, so changes persist)
-                        statusEffect.ActiveEffects.Clear();
-                        statusEffect.ActiveEffects.AddRange(newEffects);
-                        StatusEffectChanges.Add((id.Value, new List<StatEffectType>(newEffects)));
-                    }
-
-                    // Handle fire action with cooldown check
-                    if (nextInput.Fire)
-                    {
-                        InputLog.Debug($"[SERVER] Received FIRE input from player {id.Value} at tick {nextInput.Tick}");
-
-                        // Calculate ticks needed for cooldown
-
-                        var cooldownTicks = (uint)MathF.Ceiling(SimulationConfig.FireCooldown / SimulationConfig.FixedDeltaTime);
-                        var ticksSinceLastFire = _currentTick - lastFireTick.Tick;
-
-                        ProjectileLog.Debug($"[SERVER] Cooldown check: ticksSinceLastFire={ticksSinceLastFire}, cooldownTicks={cooldownTicks}");
-
-                        if (ticksSinceLastFire >= cooldownTicks)
-                        {
-                            ProjectileLog.Debug($"[SERVER] Spawning projectile for player {id.Value}");
-                            // Spawn from post-move position to stay aligned with the player
-                            spawnRequests.Add((id.Value, pos.Value, rot.Value));
-                            lastFireTick.Tick = _currentTick;
-                        }
-                        else
-                        {
-                            ProjectileLog.Debug($"[SERVER] Fire blocked by cooldown for player {id.Value}");
-                        }
-                    }
-
                     // Update last processed
                     lastProcessed.Tick = expectedTick;
                     processedCount++;
                 }
             });
-
-            // Process spawn requests
-            foreach (var req in spawnRequests)
-            {
-                SpawnProjectile(req.owner, req.pos, req.rot);
-            }
 
             // Apply visual rotation updates (after query loop to avoid structural changes)
             foreach (var update in visualRotationUpdates)
@@ -548,180 +345,22 @@ namespace AGX_Voice_Chat_Server
         }
 
         /// <summary>
-        /// Spawns a projectile from the player's position in the direction they're facing.
-        /// Projectiles spawn at fixed Z=0.5 height and travel horizontally.
-        /// </summary>
-        private void SpawnProjectile(Guid ownerId, Vector3 position, float rotation)
-        {
-            // Check projectile limit to prevent packet size issues
-            var currentProjectileCount = _world.Query<ProjectileComponent>().Count;
-            if (currentProjectileCount >= MaxProjectiles)
-            {
-                Log.Warning("Max projectile limit ({MaxProjectiles}) reached, skipping spawn", MaxProjectiles);
-                return;
-            }
-
-            // Calculate projectile direction from rotation (horizontal only)
-            var direction = new Vector2(MathF.Cos(rotation), MathF.Sin(rotation));
-            var velocity = new Vector3(
-                direction.X * SimulationConfig.ProjectileSpeed,
-                direction.Y * SimulationConfig.ProjectileSpeed,
-                0f // Projectiles don't have vertical velocity
-            );
-
-            // Spawn exactly at player XY (only Z offset remains)
-            var spawnPos = new Vector3(
-                position.X,
-                position.Y,
-                position.Z + SimulationConfig.ProjectileSpawnZOffset // Spawn offset from player Z
-            );
-
-            var projectile = _world.CreateEntity();
-            var projId = _nextProjectileId++;
-            projectile.AddComponent(new ProjectileComponent
-            {
-                Id = projId
-            });
-            projectile.AddComponent(new OwnerComponent { Value = ownerId });
-            projectile.AddComponent(new LifetimeComponent { Value = 0f });
-            projectile.AddComponent(new PositionComponent { Value = spawnPos });
-            projectile.AddComponent(new VelocityComponent { Value = velocity });
-
-            // Check if spawning inside a wall
-            ProjectileLog.Debug($"[SERVER] Projectile {projId} spawned at ({spawnPos.X:F1}, {spawnPos.Y:F1}, {spawnPos.Z:F1})");
-            ProjectileLog.Debug($"[SERVER]   Velocity: ({velocity.X:F1}, {velocity.Y:F1}, {velocity.Z:F1})");
-
-            Log.Debug("Projectile {ProjectileId} spawned by {OwnerId} at ({X:F1}, {Y:F1}, {Z:F1})",
-                projId, ownerId, spawnPos.X, spawnPos.Y, spawnPos.Z);
-        }
-
-        /// <summary>
-        /// Simulates all projectiles: movement, lifetime, and cleanup.
-        /// </summary>
-        private void SimulateProjectiles(float deltaTime)
-        {
-            var projectileQuery = _world.Query<ProjectileComponent, PositionComponent, VelocityComponent, LifetimeComponent>();
-            var toDestroy = new List<Entity>();
-
-            projectileQuery.ForEachEntity((ref ProjectileComponent proj, ref PositionComponent pos,
-                ref VelocityComponent vel, ref LifetimeComponent lifetime, Entity entity) =>
-            {
-                // Update lifetime
-                lifetime.Value += deltaTime;
-                if (lifetime.Value >= SimulationConfig.ProjectileMaxLifetime)
-                {
-                    ProjectileLog.Debug($"[SERVER] Projectile {proj.Id} expired (lifetime={lifetime.Value:F2}s)");
-                    toDestroy.Add(entity);
-                    return;
-                }
-
-                // Calculate new position BEFORE moving
-                var oldPos = pos.Value;
-                var newPos = pos.Value + vel.Value * deltaTime;
-
-                // Check for voxel collision BEFORE moving
-                if (RayCastVoxel(oldPos, newPos, out var hitPos, out var hitNormal))
-                {
-                    ProjectileLog.Debug($"[SERVER] Projectile {proj.Id} hit voxel at ({hitPos.X:F1}, {hitPos.Y:F1}, {hitPos.Z:F1})");
-                    DamageVoxel(hitPos, hitNormal);
-                    toDestroy.Add(entity);
-                    return; // Hit voxel, stop processing
-                }
-
-                // Check if new position would be out of bounds (destroy)
-
-                // Move projectile (only if no collision detected)
-                pos.Value = newPos;
-            });
-
-            // Destroy expired/out-of-bounds projectiles
-            foreach (var entity in toDestroy)
-            {
-                entity.DeleteEntity();
-            }
-        }
-
-        /// <summary>
-        /// Detects projectile-player hits. Server is authoritative for all hit detection.
-        /// </summary>
-        private void DetectHits()
-        {
-            var projectileQuery = _world.Query<ProjectileComponent, PositionComponent, OwnerComponent>();
-            var playerQuery = _world.Query<IdComponent, PositionComponent>();
-            var toDestroy = new List<Entity>();
-
-            // Collect projectiles
-            var projectiles = new List<(Entity entity, uint id, Guid ownerId, Vector3 pos)>();
-            projectileQuery.ForEachEntity((ref ProjectileComponent proj, ref PositionComponent projPos, ref OwnerComponent owner, Entity projEntity) => { projectiles.Add((projEntity, proj.Id, owner.Value, projPos.Value)); });
-
-            // Collect players
-            var players = new List<(Guid id, Vector3 pos)>();
-            playerQuery.ForEachEntity((ref IdComponent id, ref PositionComponent playerPos, Entity playerEntity) => { players.Add((id.Value, playerPos.Value)); });
-
-            // Check collisions
-            foreach (var proj in projectiles)
-            {
-                foreach (var player in players)
-                {
-                    // Ignore collisions with the owner (no self-damage)
-                    if (proj.ownerId == player.id) continue;
-
-                    // Check collision
-                    if (!PhysicsSimulation.CheckProjectileHit(
-                            proj.pos, SimulationConfig.ProjectileRadius,
-                            player.pos, SimulationConfig.PlayerRadius)) continue;
-
-                    Log.Information("Projectile {ProjectileId} hit player {PlayerId}", proj.id, player.id);
-                    toDestroy.Add(proj.entity);
-
-                    // Apply damage
-                    var playerEntity = FindPlayerEntity(player.id);
-                    if (!playerEntity.IsNull && playerEntity.TryGetComponent<HealthComponentWrapper>(out var healthWrapper))
-                    {
-                        var health = healthWrapper.Health;
-                        health.Current -= 10; // Default damage
-                        if (health.Current < 0) health.Current = 0;
-                        playerEntity.AddComponent(new HealthComponentWrapper { Health = health }); // Update component
-                        Log.Information("Player {PlayerId} took damage. Health: {Current}/{Max}",
-                            player.id, health.Current, health.Max);
-                    }
-
-                    break; // Projectile can only hit one player
-                }
-            }
-
-            // Destroy hit projectiles
-            foreach (var entity in toDestroy)
-            {
-                entity.DeleteEntity();
-            }
-        }
-
-        /// <summary>
-        /// Generates a world snapshot for broadcasting to clients.
+        /// Generates a world snapshot for broadcasting to clients (players only; no projectiles/boxes).
         /// Should be called at 30Hz (every 2nd tick).
         /// </summary>
         public WorldSnapshot GenerateSnapshot()
         {
             var players = new List<PlayerState>();
-            var projectiles = new List<ProjectileState>();
-            var boxes = new List<BoxState>();
-
-            // Gather player states
             var playerQuery = _world.Query<IdComponent, PositionComponent, VelocityComponent,
                 RotationComponent, NameComponent>();
-
 
             playerQuery.ForEachEntity((ref IdComponent id, ref PositionComponent pos,
                 ref VelocityComponent vel, ref RotationComponent rot,
                 ref NameComponent name, Entity entity) =>
             {
-                // Serialize health component
                 var healthData = Array.Empty<byte>();
                 if (entity.TryGetComponent<HealthComponentWrapper>(out var healthWrapper))
-                {
                     healthData = HealthComponent.Serialize(healthWrapper.Health);
-                }
 
                 players.Add(new PlayerState
                 {
@@ -734,47 +373,13 @@ namespace AGX_Voice_Chat_Server
                 });
             });
 
-            // Gather projectile states
-            var projectileQuery = _world.Query<ProjectileComponent, PositionComponent, VelocityComponent, OwnerComponent>();
-            projectileQuery.ForEachEntity((ref ProjectileComponent proj, ref PositionComponent pos,
-                ref VelocityComponent vel, ref OwnerComponent owner, Entity entity) =>
-            {
-                projectiles.Add(new ProjectileState
-                {
-                    Id = proj.Id,
-                    Position = pos.Value,
-                    Velocity = vel.Value,
-                    OwnerId = owner.Value
-                });
-            });
-
-            // Gather box states
-            var boxQuery = _world.Query<BoxComponent, PositionComponent>();
-            boxQuery.ForEachEntity((ref BoxComponent box, ref PositionComponent pos, Entity entity) =>
-            {
-                boxes.Add(new BoxState
-                {
-                    Id = box.Id,
-                    Position = pos.Value
-                });
-            });
-
-            if (projectiles.Count > 0)
-            {
-                NetworkLog.Debug($"[SERVER] Generating snapshot with {projectiles.Count} projectiles");
-                foreach (var proj in projectiles)
-                {
-                    NetworkLog.Debug($"[SERVER]   Projectile {proj.Id}: Pos=({proj.Position.X:F1}, {proj.Position.Y:F1}, {proj.Position.Z:F1}) Owner={proj.OwnerId}");
-                }
-            }
-
             return new WorldSnapshot
             {
                 Tick = _currentTick,
-                LastProcessedInputTick = 0, // Will be set per-client in Server.cs
+                LastProcessedInputTick = 0,
                 Players = players.ToArray(),
-                Projectiles = projectiles.ToArray(),
-                Boxes = boxes.ToArray()
+                Projectiles = Array.Empty<ProjectileState>(),
+                Boxes = Array.Empty<BoxState>()
             };
         }
 
@@ -832,81 +437,6 @@ namespace AGX_Voice_Chat_Server
                 }
             });
             return found;
-        }
-
-        /// <summary>
-        /// Raycasts against voxels to find the first hit.
-        /// Returns true if a voxel was hit.
-        /// </summary>
-        private bool RayCastVoxel(Vector3 start, Vector3 end, out Vector3 hitPos, out Vector3 hitNormal)
-        {
-            hitPos = Vector3.Zero;
-            hitNormal = Vector3.Zero;
-
-            Vector3 direction = end - start;
-            float maxDistance = direction.Length();
-            direction /= maxDistance;
-
-            // Simple step-based raycast (DDA or similar would be better but this is sufficient for now)
-            float stepSize = SimulationConfig.BlockSize / 4f;
-
-            float distance = 0f;
-
-            while (distance <= maxDistance)
-            {
-                Vector3 currentPos = start + direction * distance;
-
-
-                if (ChunkManager.HasBlockAtPosition(currentPos.X, currentPos.Y, currentPos.Z))
-                {
-                    hitPos = currentPos;
-                    hitNormal = -direction; // Rough approximation
-                    return true;
-                }
-
-                distance += stepSize;
-            }
-
-            return false;
-        }
-
-        private void DamageVoxel(Vector3 hitPos, Vector3 hitNormal)
-        {
-            // Identify block coordinates
-            int blockX = (int)Math.Floor((hitPos.X - SimulationConfig.WorldMinX) / SimulationConfig.BlockSize);
-            int blockY = (int)Math.Floor((hitPos.Y - SimulationConfig.WorldMinY) / SimulationConfig.BlockSize);
-            int blockZ = (int)Math.Floor(hitPos.Z / SimulationConfig.BlockSize);
-
-            int chunkX = blockX / SimulationConfig.ChunkSize;
-            int chunkY = blockY / SimulationConfig.ChunkSize;
-            int chunkZ = blockZ / SimulationConfig.ChunkHeight;
-            int localX = blockX % SimulationConfig.ChunkSize;
-            int localY = blockY % SimulationConfig.ChunkSize;
-            int localZ = blockZ % SimulationConfig.ChunkHeight;
-
-            var chunk = ChunkManager.GetChunk(chunkX, chunkY, chunkZ);
-            if (chunk != null)
-            {
-                byte currentHealth = chunk.GetBlockHealth(localX, localY, localZ);
-                if (currentHealth == 0) return; // Already destroyed
-
-                int newHealth = Math.Max(0, currentHealth - DamagePerHit);
-                chunk.SetBlockHealth(localX, localY, localZ, (byte)newHealth);
-
-                if (newHealth <= 0)
-                {
-                    // Destroy block
-                    chunk.SetBlock(localX, localY, localZ, false);
-                    OnBlockChanged?.Invoke(chunkX, chunkY, chunkZ, localX, localY, localZ, false, 0);
-                    Log.Information($"Block destroyed at ({blockX}, {blockY}, {blockZ})");
-                }
-                else
-                {
-                    // Broadcast health update (block still exists but damaged)
-                    OnBlockChanged?.Invoke(chunkX, chunkY, chunkZ, localX, localY, localZ, true, (byte)newHealth);
-                    Log.Information($"Block damaged at ({blockX}, {blockY}, {blockZ}), health: {newHealth}/100");
-                }
-            }
         }
 
         /// <summary>

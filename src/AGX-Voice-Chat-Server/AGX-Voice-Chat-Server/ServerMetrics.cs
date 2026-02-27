@@ -49,7 +49,6 @@ namespace AGX_Voice_Chat_Server
         public ObservableGauge<int> EntitiesActive { get; }
         public Counter<long> EntitiesSpawned { get; }
         public Counter<long> EntitiesDespawned { get; }
-        public ObservableGauge<int> ChunksLoaded { get; }
         
         // Error & Stability Metrics
         public Counter<long> ErrorsTotal { get; }
@@ -188,12 +187,6 @@ namespace AGX_Voice_Chat_Server
                 "server.entities.despawned",
                 unit: "entities",
                 description: "Total entities despawned");
-            
-            ChunksLoaded = _meter.CreateObservableGauge(
-                "server.world.chunks.loaded",
-                () => GetChunksLoaded(),
-                unit: "chunks",
-                description: "Number of loaded chunks");
             
             // Error & Stability Metrics
             ErrorsTotal = _meter.CreateCounter<long>(
@@ -342,18 +335,6 @@ namespace AGX_Voice_Chat_Server
         private double GetCurrentTickRate()
         {
             return _currentTickRate;
-        }
-        
-        private int _chunksLoaded;
-        
-        public void UpdateChunksLoaded(int count)
-        {
-            Interlocked.Exchange(ref _chunksLoaded, count);
-        }
-        
-        private int GetChunksLoaded()
-        {
-            return _chunksLoaded;
         }
         
         public void Dispose()

@@ -15,7 +15,6 @@ namespace AGX_Voice_Chat_Server
                 .MinimumLevel.Verbose()
                 .CreateLogger();
 
-
             Log.Information("Starting AGH Server...");
 
             // Parse port from command line arguments
@@ -91,18 +90,18 @@ namespace AGX_Voice_Chat_Server
     /// <summary>
     /// Hosted service to run the game server loop in the background.
     /// </summary>
-    public class ServerHostedService : BackgroundService
+    public class ServerHostedService(Server server) : BackgroundService
     {
-        private readonly Server _server;
-
-        public ServerHostedService(Server server)
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _server = server;
-        }
-
-        protected override Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            return Task.Run(() => { _server.Start(_server.GamePort); }, stoppingToken);
+            try
+            {
+                await Task.Run(() => server.Start(server.GamePort, stoppingToken), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Information("Server shutdown requested.");
+            }
         }
     }
 }

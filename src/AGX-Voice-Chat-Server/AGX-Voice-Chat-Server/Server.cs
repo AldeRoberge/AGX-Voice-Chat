@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
 using AGH.Shared;
-using AGH.Shared.Items;
 using Friflo.Engine.ECS;
 using LiteNetLib;
 using LiteNetLib.Utils;
@@ -24,7 +23,7 @@ namespace AGX_Voice_Chat_Server
         private volatile bool _isRunning = true;
         private const double TickWarningThresholdMs = 20.0;
 
-        public int GamePort { get; set; } = 10515;
+        public int GamePort { get; init; } = 10515;
 
         public Server()
         {
@@ -49,21 +48,14 @@ namespace AGX_Voice_Chat_Server
             _packetProcessor.SubscribeReusable<InputCommand, NetPeer>(OnInputCommand);
             _packetProcessor.SubscribeReusable<PingPacket, NetPeer>(OnPing);
             _packetProcessor.SubscribeReusable<ChatMessagePacket, NetPeer>(OnTextMessage);
-            _packetProcessor.SubscribeReusable<VoxelPaintRequestPacket, NetPeer>(OnVoxelPaintRequest);
-            _packetProcessor.SubscribeReusable<ItemUseAction, NetPeer>(OnItemUseAction);
-            _packetProcessor.SubscribeReusable<InventorySlotSwitchedAction, NetPeer>(OnInventorySlotSwitchedAction);
-            _packetProcessor.SubscribeReusable<StatEffectChanged, NetPeer>(OnStatEffectChanged);
 
             // Dissonance voice chat relay (all voice logic lives in DissonanceVoiceModule)
             _voiceModule = new DissonanceVoiceModule(_packetProcessor, _peers, _metrics);
             _voiceModule.Register();
 
-            // Subscribe to world events
-
-            _world.OnBlockChanged += OnBlockChanged;
         }
 
-        public void Start(int port = 10515)
+        public void Start(int port = 10515, CancellationToken cancellationToken = default)
         {
             if (!_netManager.Start(port))
             {
@@ -83,7 +75,7 @@ namespace AGX_Voice_Chat_Server
             double tickDurationSum = 0;
             var tickCount = 0;
 
-            while (_isRunning)
+            while (_isRunning && !cancellationToken.IsCancellationRequested)
             {
                 var now = stopwatch.Elapsed.TotalSeconds;
                 var frameTime = now - lastTime;
@@ -97,10 +89,6 @@ namespace AGX_Voice_Chat_Server
 
                     // Simulation tick
                     _world.Tick((float)fixedDelta);
-
-                    // Broadcast status effect changes (if any occurred this tick)
-
-                    BroadcastStatusEffectChanges();
 
                     // Broadcast snapshot at configured rate (30Hz)
                     if (_world.ShouldBroadcastSnapshot())
@@ -145,9 +133,8 @@ namespace AGX_Voice_Chat_Server
                         // Update GC metrics
                         _metrics.UpdateGcCollections();
 
-                        // Update entity and chunk metrics
+                        // Update entity metrics
                         _metrics.UpdateEntitiesActive(_world.GetEntityCount());
-                        _metrics.UpdateChunksLoaded(_world.ChunkManager.GetAllChunks().Count());
 
                         tickDurationSum = 0;
                         tickCount = 0;
@@ -202,12 +189,8 @@ namespace AGX_Voice_Chat_Server
                 var writer = new NetDataWriter();
                 _packetProcessor.Write(writer, snapshot);
 
-                // Log warning if packet is getting large
                 if (writer.Length > 800)
-                {
-                    Log.Warning("Large snapshot packet: {Size} bytes (Players: {PlayerCount}, Projectiles: {ProjectileCount})",
-                        writer.Length, snapshot.Players.Length, snapshot.Projectiles.Length);
-                }
+                    Log.Warning("Large snapshot packet: {Size} bytes (Players: {PlayerCount})", writer.Length, snapshot.Players.Length);
 
                 // Use ReliableSequenced instead of Unreliable to support fragmentation for large packets
                 // ReliableSequenced provides fragmentation support while still being relatively fast
@@ -217,34 +200,6 @@ namespace AGX_Voice_Chat_Server
                 // Record network metrics
                 _metrics.RecordBytesSent(writer.Length);
                 _metrics.RecordPacketSent();
-            }
-        }
-
-        private void BroadcastStatusEffectChanges()
-        {
-            // Only broadcast if there are changes
-            if (_world.StatusEffectChanges.Count == 0)
-                return;
-
-            foreach (var (playerId, effects) in _world.StatusEffectChanges)
-            {
-                var packet = new StatEffectChanged
-                {
-                    PlayerId = playerId
-                };
-                packet.SetActiveEffects(effects);
-
-                var writer = new NetDataWriter();
-                _packetProcessor.Write(writer, packet);
-
-                // Broadcast to all peers
-                foreach (var peer in _peers.Keys)
-                {
-                    peer.Send(writer, DeliveryMethod.ReliableOrdered);
-                }
-
-                Log.Debug("Broadcasted status effect change for player {PlayerId}: {Effects}",
-                    playerId, string.Join(", ", effects));
             }
         }
 
@@ -304,19 +259,12 @@ namespace AGX_Voice_Chat_Server
             var playerId = Guid.NewGuid();
             Log.Information("Player {PlayerName} joining with ID {PlayerId}", packet.PlayerName, playerId);
 
-            // Spawn at random position ABOVE terrain
             var random = new Random();
             float spawnX = (float)(random.NextDouble() * 200 - 100);
             float spawnY = (float)(random.NextDouble() * 200 - 100);
-
-            // Get terrain height at this position and spawn above it
-
-            float terrainHeight = _world.ChunkManager.GetTerrainHeight(spawnX, spawnY);
-            float spawnZ = terrainHeight + 10f; // Spawn 10 units above terrain
-
-
+            float terrainHeight = ServerWorld.GetTerrainHeight(spawnX, spawnY);
+            float spawnZ = terrainHeight + 10f;
             var spawnPos = new Vector3(spawnX, spawnY, spawnZ);
-
 
             Log.Information("Player {PlayerId} spawning at ({X:F1}, {Y:F1}, {Z:F1}), terrain height: {Height:F1}",
                 playerId, spawnX, spawnY, spawnZ, terrainHeight);
@@ -324,10 +272,8 @@ namespace AGX_Voice_Chat_Server
             _world.AddPlayer(playerId, spawnPos, packet.PlayerName);
             _peers[peer] = playerId;
 
-            // Record player join metric
             _metrics.RecordPlayerJoin();
 
-            // Send join response
             var response = new JoinResponsePacket
             {
                 PlayerId = playerId,
@@ -339,60 +285,6 @@ namespace AGX_Voice_Chat_Server
             _packetProcessor.Write(writer, response);
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
 
-            // Send all chunks to the newly connected client
-            foreach (var chunk in _world.ChunkManager.GetAllChunks())
-            {
-                var chunkPacket = new ChunkCreatePacket
-                {
-                    ChunkX = chunk.ChunkX,
-                    ChunkY = chunk.ChunkY,
-                    ChunkZ = chunk.ChunkZ,
-                    BlockTypes = chunk.BlockTypes,
-                    BlockHealth = chunk.BlockHealth
-                };
-                var chunkWriter = new NetDataWriter();
-                _packetProcessor.Write(chunkWriter, chunkPacket);
-                peer.Send(chunkWriter, DeliveryMethod.ReliableOrdered);
-            }
-
-            Log.Information("Sent {ChunkCount} chunks to player {PlayerId}",
-                SimulationConfig.WorldChunksX * SimulationConfig.WorldChunksY, playerId);
-
-            // Send inventory full sync to the newly connected player
-            Log.Debug("Querying for player {PlayerId} inventory to send sync", playerId);
-            var playerQuery = _world.Query<IdComponent, InventoryComponentWrapper>();
-            bool foundPlayer = false;
-            playerQuery.ForEachEntity((ref IdComponent id, ref InventoryComponentWrapper inventory, Entity entity) =>
-            {
-                if (id.Value == playerId)
-                {
-                    foundPlayer = true;
-                    var inv = inventory.Inventory;
-                    Log.Information("Sending inventory to {PlayerId}: Slot0={Item0}, Slot1={Item1}, Slot2={Item2}, Slot3={Item3}",
-                        playerId,
-                        inv.Slots[0].ItemType,
-                        inv.Slots[1].ItemType,
-                        inv.Slots[2].ItemType,
-                        inv.Slots[3].ItemType);
-
-                    var inventorySyncPacket = new InventoryFullSyncPacket
-                    {
-                        PlayerId = playerId
-                    };
-                    inventorySyncPacket.SetInventory(inv);
-                    var invWriter = new NetDataWriter();
-                    _packetProcessor.Write(invWriter, inventorySyncPacket);
-                    peer.Send(invWriter, DeliveryMethod.ReliableOrdered);
-                    Log.Information("Sent inventory sync packet to player {PlayerId}, size: {Size} bytes", playerId, invWriter.Length);
-                }
-            });
-
-            if (!foundPlayer)
-            {
-                Log.Error("Failed to find player {PlayerId} for inventory sync!", playerId);
-            }
-
-            // Broadcast PlayerInfo to all clients (including new player)
             BroadcastPlayerInfo(playerId, packet.PlayerName, 100);
 
             // Send welcome message
@@ -453,271 +345,6 @@ namespace AGX_Voice_Chat_Server
             {
                 Log.Warning("Received text message from unknown peer {PeerId}", peer.Id);
             }
-        }
-
-        private void OnVoxelPaintRequest(VoxelPaintRequestPacket packet, NetPeer peer)
-        {
-            if (_peers.TryGetValue(peer, out var playerId))
-            {
-                var playerName = _world.GetPlayerName(playerId);
-                WorldEditLog.Debug($"[SERVER] Received voxel paint request from {playerName}: Pos=({packet.WorldPosition.X:F1}, {packet.WorldPosition.Y:F1}, {packet.WorldPosition.Z:F1}), Type={packet.VoxelType}, Removing={packet.IsRemoving}");
-
-                // Convert world position to grid coordinates
-                // IMPORTANT: Account for world offset!
-
-                int gridX = (int)Math.Floor((packet.WorldPosition.X - SimulationConfig.WorldMinX) / SimulationConfig.BlockSize);
-                int gridY = (int)Math.Floor((packet.WorldPosition.Y - SimulationConfig.WorldMinY) / SimulationConfig.BlockSize);
-                int gridZ = (int)Math.Floor(packet.WorldPosition.Z / SimulationConfig.BlockSize);
-
-                WorldEditLog.Debug($"[SERVER] Converted to grid coords: ({gridX}, {gridY}, {gridZ})");
-
-                // Convert to chunk coordinates
-                int chunkX = (int)Math.Floor((float)gridX / SimulationConfig.ChunkSize);
-                int chunkY = (int)Math.Floor((float)gridY / SimulationConfig.ChunkSize);
-                int chunkZ = (int)Math.Floor((float)gridZ / SimulationConfig.ChunkHeight);
-
-                // Get local coordinates
-                int localX = gridX - chunkX * SimulationConfig.ChunkSize;
-                int localY = gridY - chunkY * SimulationConfig.ChunkSize;
-                int localZ = gridZ - chunkZ * SimulationConfig.ChunkHeight;
-
-                // Handle negative coordinates
-                while (localX < 0)
-                {
-                    localX += SimulationConfig.ChunkSize;
-                    chunkX--;
-                }
-
-                while (localY < 0)
-                {
-                    localY += SimulationConfig.ChunkSize;
-                    chunkY--;
-                }
-
-                while (localZ < 0)
-                {
-                    localZ += SimulationConfig.ChunkHeight;
-                    chunkZ--;
-                }
-
-                WorldEditLog.Debug($"[SERVER] Chunk coords: ({chunkX}, {chunkY}, {chunkZ}), Local coords: ({localX}, {localY}, {localZ})");
-
-                // Get or create chunk
-                var chunk = _world.ChunkManager.GetChunk(chunkX, chunkY, chunkZ);
-                if (chunk == null)
-                {
-                    Log.Warning("Cannot modify voxel: chunk ({ChunkX}, {ChunkY}, {ChunkZ}) does not exist", chunkX, chunkY, chunkZ);
-                    WorldEditLog.Error($"[SERVER] ERROR: Chunk ({chunkX}, {chunkY}, {chunkZ}) does not exist!");
-                    return;
-                }
-
-                // Modify the voxel
-                bool newState = !packet.IsRemoving; // true = place, false = remove
-                chunk.SetBlock(localX, localY, localZ, newState, packet.VoxelType);
-                if (newState)
-                {
-                    chunk.SetBlockData(localX, localY, localZ, (byte)packet.Rotation);
-                }
-                else
-                {
-                    chunk.SetBlockData(localX, localY, localZ, 0);
-                }
-
-                WorldEditLog.Debug($"[SERVER] Successfully set block to {newState} (type={packet.VoxelType}) at chunk ({chunkX}, {chunkY}, {chunkZ}), local ({localX}, {localY}, {localZ})");
-
-                // Broadcast the change to all clients (OnBlockChanged will handle this)
-                // The event is triggered inside ChunkManager if we use it properly
-                // For now, manually broadcast
-                var updatePacket = new ChunkUpdatePacket
-                {
-                    ChunkX = chunkX,
-                    ChunkY = chunkY,
-                    ChunkZ = chunkZ,
-                    Updates = new[]
-                    {
-                        new BlockUpdate
-                        {
-                            LocalX = (byte)localX,
-                            LocalY = (byte)localY,
-                            LocalZ = (byte)localZ,
-                            Exists = (byte)(newState ? 1 : 0), // Convert bool to byte
-                            BlockType = (byte)packet.VoxelType,
-                            Health = 100,
-                            Data = (byte)(newState ? packet.Rotation : 0)
-                        }
-                    }
-                };
-
-                WorldEditLog.Information("[SERVER] Broadcasting chunk update: Chunk=({ChunkX},{ChunkY},{ChunkZ}), Local=({X},{Y},{Z}), Exists={Exists}, BlockType={BlockType} (enum: {EnumType}), Health={Health}",
-                    chunkX, chunkY, chunkZ, localX, localY, localZ, newState ? 1 : 0, (byte)packet.VoxelType, packet.VoxelType, 100);
-
-                var writer = new NetDataWriter();
-                _packetProcessor.Write(writer, updatePacket);
-                _netManager.SendToAll(writer, DeliveryMethod.ReliableOrdered);
-
-                var action = packet.IsRemoving ? "removed" : "placed";
-                Log.Information("{PlayerName} {Action} {VoxelType} at grid ({X}, {Y}, {Z})",
-                    playerName, action, packet.VoxelType, gridX, gridY, gridZ);
-            }
-            else
-            {
-                Log.Warning("Received voxel paint request from unknown peer {PeerId}", peer.Id);
-            }
-        }
-
-        private void OnBlockChanged(int chunkX, int chunkY, int chunkZ, int localX, int localY, int localZ, bool exists, byte health)
-        {
-            // Get the block type from the chunk
-            var chunk = _world.ChunkManager.GetChunk(chunkX, chunkY, chunkZ);
-            byte blockType = chunk != null ? (byte)chunk.GetBlockType(localX, localY, localZ) : (byte)VoxelType.Cube;
-            byte blockData = chunk != null ? chunk.GetBlockData(localX, localY, localZ) : (byte)0;
-
-            var updatePacket = new ChunkUpdatePacket
-            {
-                ChunkX = chunkX,
-                ChunkY = chunkY,
-                ChunkZ = chunkZ,
-                Updates = new[]
-                {
-                    new BlockUpdate
-                    {
-                        LocalX = (byte)localX,
-                        LocalY = (byte)localY,
-                        LocalZ = (byte)localZ,
-                        Exists = (byte)(exists ? 1 : 0), // Convert bool to byte
-                        BlockType = blockType,
-                        Health = health,
-                        Data = blockData
-                    }
-                }
-            };
-
-            var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, updatePacket);
-
-            // Broadcast to all peers
-            foreach (var peer in _peers.Keys)
-            {
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-            }
-        }
-
-        private void OnItemUseAction(ItemUseAction packet, NetPeer peer)
-        {
-            if (!_peers.TryGetValue(peer, out var playerId))
-                return;
-
-            // Find player entity
-            var playerQuery = _world.Query<IdComponent, InventoryComponentWrapper, ItemCooldownsComponent>();
-            playerQuery.ForEachEntity((ref IdComponent id, ref InventoryComponentWrapper inventory,
-                ref ItemCooldownsComponent cooldowns, Entity entity) =>
-            {
-                if (id.Value != playerId)
-                    return;
-
-                var inv = inventory.Inventory;
-
-                // Validate slot index
-                if (packet.SlotIndex < 0 || packet.SlotIndex >= InventoryComponent.SlotCount)
-                {
-                    Log.Warning("Player {PlayerId} attempted to use invalid slot {SlotIndex}", playerId, packet.SlotIndex);
-                    return;
-                }
-
-                var itemStack = inv.GetSlot(packet.SlotIndex);
-                if (itemStack.IsEmpty)
-                {
-                    Log.Debug("Player {PlayerId} attempted to use empty slot {SlotIndex}", playerId, packet.SlotIndex);
-                    return;
-                }
-
-                var itemDef = ItemDefinitions.Get(itemStack.ItemType);
-                var cooldownTicks = (uint)(itemDef.UseEffect.CooldownSeconds * SimulationConfig.ServerTickRate);
-
-                // Check cooldown
-                if (cooldowns.LastUseTicks.TryGetValue(itemStack.ItemType, out var lastUseTick))
-                {
-                    var ticksSinceLastUse = _world.CurrentTick - lastUseTick;
-                    if (ticksSinceLastUse < cooldownTicks)
-                    {
-                        Log.Debug("Player {PlayerId} item {ItemType} on cooldown ({TicksRemaining} ticks remaining)",
-                            playerId, itemStack.ItemType, cooldownTicks - ticksSinceLastUse);
-                        return;
-                    }
-                }
-
-                // Update cooldown
-                cooldowns.LastUseTicks[itemStack.ItemType] = _world.CurrentTick;
-
-                // Process item use effect
-                if (itemDef.UseEffect.SpawnProjectileOnUse)
-                {
-                    // Item usage will trigger projectile spawn through existing fire logic
-                    // The Fire input is already handled, so we just update the cooldown here
-                    Log.Debug("Player {PlayerId} used {ItemType} at tick {Tick}", playerId, itemStack.ItemType, _world.CurrentTick);
-                }
-
-                // Broadcast item used event
-                var itemUsedEvent = new ItemUsedEvent
-                {
-                    PlayerId = playerId,
-                    ItemType = itemStack.ItemType,
-                    ServerTick = _world.CurrentTick
-                };
-
-                var writer = new NetDataWriter();
-                _packetProcessor.Write(writer, itemUsedEvent);
-                foreach (var p in _peers.Keys)
-                {
-                    p.Send(writer, DeliveryMethod.ReliableOrdered);
-                }
-            });
-        }
-
-        private void OnInventorySlotSwitchedAction(InventorySlotSwitchedAction packet, NetPeer peer)
-        {
-            if (!_peers.TryGetValue(peer, out var playerId))
-                return;
-
-            // Find player entity
-            var playerQuery = _world.Query<IdComponent, InventoryComponentWrapper>();
-            playerQuery.ForEachEntity((ref IdComponent id, ref InventoryComponentWrapper inventory, Entity entity) =>
-            {
-                if (id.Value != playerId)
-                    return;
-
-                var inv = inventory.Inventory;
-
-                // Validate and switch slot
-                if (inv.SwitchSlot(packet.SlotIndex))
-                {
-                    Log.Debug("Player {PlayerId} switched to slot {SlotIndex}", playerId, packet.SlotIndex);
-
-                    // Broadcast slot switch event
-                    var slotSwitchedEvent = new InventorySlotSwitchedEvent
-                    {
-                        PlayerId = playerId,
-                        SlotIndex = packet.SlotIndex
-                    };
-
-                    var writer = new NetDataWriter();
-                    _packetProcessor.Write(writer, slotSwitchedEvent);
-                    foreach (var p in _peers.Keys)
-                    {
-                        p.Send(writer, DeliveryMethod.ReliableOrdered);
-                    }
-                }
-                else
-                {
-                    Log.Warning("Player {PlayerId} attempted to switch to invalid slot {SlotIndex}", playerId, packet.SlotIndex);
-                }
-            });
-        }
-
-        private void OnStatEffectChanged(StatEffectChanged packet, NetPeer peer)
-        {
-            // Clients should never send this packet - server is authoritative
-            Log.Warning("Client {Peer} sent StatEffectChanged packet - ignoring (server is authoritative)", peer.Address);
         }
 
         // INetEventListener implementation
