@@ -1,6 +1,6 @@
 using MessagePack;
 
-namespace AGH.Shared.Items
+namespace AGH_Voice_Chat_Client.Game.Items
 {
     /// <summary>
     /// Represents a stack of items with a specific type, ID, and quantity.

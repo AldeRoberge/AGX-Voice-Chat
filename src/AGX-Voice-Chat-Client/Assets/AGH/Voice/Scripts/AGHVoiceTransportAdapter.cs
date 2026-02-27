@@ -1,4 +1,5 @@
 using System;
+using AGH.Shared;
 using AGH_Voice_Chat_Shared.Packets;
 using LiteNetLib;
 using LiteNetLib.Utils;
@@ -9,12 +10,17 @@ namespace AGH.Voice
     /// <summary>
     /// Implements <see cref="IAGHVoiceTransport"/> over LiteNetLib.
     /// Call <see cref="SetLiteNet"/> with your server peer and packet processor after connecting.
-    /// Register voice packets with <see cref="AGHVoiceNetworkRegistration.RegisterVoicePackets"/> and subscribe to
-    /// VoiceDataFromPacket, then call <see cref="RaiseVoiceDataFrom"/> when received.
+    /// Optionally assign <see cref="positionSource"/> to auto-send position; or call <see cref="SendPosition"/> from your game.
     /// </summary>
     public class AGHVoiceTransportAdapter : MonoBehaviour, IAGHVoiceTransport
     {
         [SerializeField] private string localPlayerIdGuid = "";
+
+        [Tooltip("If set, position is sent to the server at ~20Hz. Otherwise call SendPosition from your game.")]
+        [SerializeField] private Transform positionSource;
+
+        [SerializeField] private float positionSendInterval = 0.05f;
+        private float _positionSendAccumulator;
 
         private bool _isConnected;
         private NetPeer _serverPeer;
@@ -63,5 +69,30 @@ namespace AGH.Voice
             _serverPeer.Send(writer, channel, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable);
         }
 
+        /// <summary>
+        /// Send current position to the server (client-authoritative). Call from your game or assign positionSource to auto-send.
+        /// </summary>
+        public void SendPosition(Vector3 position)
+        {
+            if (!_isConnected || _serverPeer == null || _packetProcessor == null)
+                return;
+            var packet = new PlayerPositionPacket { Position = position };
+            var writer = new NetDataWriter();
+            _packetProcessor.Write(writer, packet);
+            _serverPeer.Send(writer, 0, DeliveryMethod.Unreliable);
+        }
+
+        private void Update()
+        {
+            if (positionSource != null && _isConnected && _serverPeer != null && _packetProcessor != null)
+            {
+                _positionSendAccumulator += Time.deltaTime;
+                if (_positionSendAccumulator >= positionSendInterval)
+                {
+                    _positionSendAccumulator = 0f;
+                    SendPosition(positionSource.position);
+                }
+            }
+        }
     }
 }

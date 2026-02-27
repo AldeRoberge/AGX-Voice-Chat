@@ -1,11 +1,9 @@
 using System;
-using System.Collections.Generic;
 using System.Numerics;
-using AGH.Shared.Items;
+using AGH_Voice_Chat_Client.Game.Items;
 using LiteNetLib.Utils;
 
-
-namespace AGH.Shared
+namespace AGH_Voice_Chat_Client.Game
 {
     // ============================================================================
     // CONNECTION PACKETS
@@ -57,46 +55,27 @@ namespace AGH.Shared
     }
 
     // ============================================================================
-    // INPUT PACKETS
+    // POSITION PACKET (client-authoritative)
     // ============================================================================
 
     /// <summary>
-    /// Client input command sent to server every tick.
-    /// Contains movement direction, rotation, and action states with tick stamp.
-    /// Server processes these strictly in tick order.
+    /// Client sends current position; server stores and broadcasts in snapshots.
+    /// No reconciliation, interpolation, or input queue.
     /// </summary>
-    public class InputCommand : INetSerializable
+    public class PlayerPositionPacket : INetSerializable
     {
-        public uint Tick { get; set; }
-        public Vector3 MoveDirection { get; set; }
-        public float Rotation { get; set; }
-        public bool Fire { get; set; } // Immediate fire action
-        public bool Jump { get; set; } // Jump input (server validates if grounded)
-        public bool IsDashing { get; set; } // Dash input
-        public bool IsCrouching { get; set; } // Crouch input
+        public Vector3 Position { get; set; }
 
         public void Serialize(NetDataWriter writer)
         {
-            writer.Put(Tick);
-            writer.Put(MoveDirection.X);
-            writer.Put(MoveDirection.Y);
-            writer.Put(MoveDirection.Z);
-            writer.Put(Rotation);
-            writer.Put(Fire);
-            writer.Put(Jump);
-            writer.Put(IsDashing);
-            writer.Put(IsCrouching);
+            writer.Put(Position.X);
+            writer.Put(Position.Y);
+            writer.Put(Position.Z);
         }
 
         public void Deserialize(NetDataReader reader)
         {
-            Tick = reader.GetUInt();
-            MoveDirection = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Rotation = reader.GetFloat();
-            Fire = reader.GetBool();
-            Jump = reader.GetBool();
-            IsDashing = reader.GetBool();
-            IsCrouching = reader.GetBool();
+            Position = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
         }
     }
 
@@ -105,14 +84,12 @@ namespace AGH.Shared
     // ============================================================================
 
     /// <summary>
-    /// Authoritative world state snapshot from server.
-    /// Contains all players, projectiles, and the last processed input tick for reconciliation.
-    /// Sent at 30Hz (every 2nd server tick).
+    /// World state snapshot from server. Players only (id, position, name).
+    /// Sent at 30Hz.
     /// </summary>
     public class WorldSnapshot : INetSerializable
     {
         public uint Tick { get; set; }
-        public uint LastProcessedInputTick { get; set; }
         public PlayerState[] Players { get; set; } = Array.Empty<PlayerState>();
         public ProjectileState[] Projectiles { get; set; } = Array.Empty<ProjectileState>();
         public BoxState[] Boxes { get; set; } = Array.Empty<BoxState>();
@@ -120,19 +97,15 @@ namespace AGH.Shared
         public void Serialize(NetDataWriter writer)
         {
             writer.Put(Tick);
-            writer.Put(LastProcessedInputTick);
 
-            // Players
             writer.Put((ushort)Players.Length);
             foreach (var player in Players)
                 player.Serialize(writer);
 
-            // Projectiles
             writer.Put((ushort)Projectiles.Length);
             foreach (var projectile in Projectiles)
                 projectile.Serialize(writer);
 
-            // Boxes
             writer.Put((ushort)Boxes.Length);
             foreach (var box in Boxes)
                 box.Serialize(writer);
@@ -141,9 +114,7 @@ namespace AGH.Shared
         public void Deserialize(NetDataReader reader)
         {
             Tick = reader.GetUInt();
-            LastProcessedInputTick = reader.GetUInt();
 
-            // Players
             ushort playerCount = reader.GetUShort();
             Players = new PlayerState[playerCount];
             for (int i = 0; i < playerCount; i++)
@@ -152,7 +123,6 @@ namespace AGH.Shared
                 Players[i].Deserialize(reader);
             }
 
-            // Projectiles
             ushort projectileCount = reader.GetUShort();
             Projectiles = new ProjectileState[projectileCount];
             for (int i = 0; i < projectileCount; i++)
@@ -161,7 +131,6 @@ namespace AGH.Shared
                 Projectiles[i].Deserialize(reader);
             }
 
-            // Boxes
             ushort boxCount = reader.GetUShort();
             Boxes = new BoxState[boxCount];
             for (int i = 0; i < boxCount; i++)
@@ -173,17 +142,13 @@ namespace AGH.Shared
     }
 
     /// <summary>
-    /// Authoritative player state from server.
-    /// Used for both reconciliation (local player) and rendering (remote players).
+    /// Player state in snapshot: id, position, name only.
     /// </summary>
     public class PlayerState : INetSerializable
     {
         public Guid Id { get; set; }
         public Vector3 Position { get; set; }
-        public Vector3 Velocity { get; set; }
-        public float Rotation { get; set; }
         public string Name { get; set; } = string.Empty;
-        public byte[] HealthData { get; set; } = Array.Empty<byte>();
 
         public void Serialize(NetDataWriter writer)
         {
@@ -191,22 +156,14 @@ namespace AGH.Shared
             writer.Put(Position.X);
             writer.Put(Position.Y);
             writer.Put(Position.Z);
-            writer.Put(Velocity.X);
-            writer.Put(Velocity.Y);
-            writer.Put(Velocity.Z);
-            writer.Put(Rotation);
             writer.PutLargeString(Name);
-            writer.PutBytesWithLength(HealthData);
         }
 
         public void Deserialize(NetDataReader reader)
         {
             Id = new Guid(reader.GetBytesWithLength());
             Position = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Velocity = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Rotation = reader.GetFloat();
             Name = reader.GetLargeString();
-            HealthData = reader.GetBytesWithLength();
         }
     }
 
@@ -600,45 +557,6 @@ namespace AGH.Shared
     // ============================================================================
     // STATUS EFFECT PACKETS
     // ============================================================================
-
-    /// <summary>
-    /// Sent from server to client when a player's status effects change.
-    /// Server is authoritative for status effects.
-    /// </summary>
-    public class StatEffectChanged : INetSerializable
-    {
-        public Guid PlayerId { get; set; }
-
-        // Use private field to prevent LiteNetLib auto-serialization
-
-        private List<StatEffectType> _activeEffects = new List<StatEffectType>();
-
-        // Public accessor (not an auto-property to avoid auto-serialization)
-
-        public List<StatEffectType> GetActiveEffects() => _activeEffects;
-        public void SetActiveEffects(List<StatEffectType> effects) => _activeEffects = effects;
-
-        public void Serialize(NetDataWriter writer)
-        {
-            writer.PutBytesWithLength(PlayerId.ToByteArray());
-            writer.Put((byte)_activeEffects.Count);
-            foreach (var effect in _activeEffects)
-            {
-                writer.Put((byte)effect);
-            }
-        }
-
-        public void Deserialize(NetDataReader reader)
-        {
-            PlayerId = new Guid(reader.GetBytesWithLength());
-            byte count = reader.GetByte();
-            _activeEffects = new List<StatEffectType>(count);
-            for (int i = 0; i < count; i++)
-            {
-                _activeEffects.Add((StatEffectType)reader.GetByte());
-            }
-        }
-    }
 
     // ============================================================================
     // INVENTORY PACKETS

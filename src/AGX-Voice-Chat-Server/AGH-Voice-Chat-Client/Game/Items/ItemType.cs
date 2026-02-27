@@ -1,4 +1,4 @@
-namespace AGH.Shared.Items
+namespace AGH_Voice_Chat_Client.Game.Items
 {
     /// <summary>
     /// Defines all available item types in the game.

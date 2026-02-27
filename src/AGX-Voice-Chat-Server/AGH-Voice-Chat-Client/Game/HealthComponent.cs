@@ -1,6 +1,6 @@
 using MessagePack;
 
-namespace AGH.Shared;
+namespace AGH_Voice_Chat_Client.Game;
 
 /// <summary>
 /// Shared health component used by both client and server.

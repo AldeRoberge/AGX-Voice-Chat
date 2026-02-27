@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
-        <RootNamespace>AGH_VOice_Chat_Client</RootNamespace>
+        <RootNamespace>AGH_Voice_Chat_Client</RootNamespace>
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
     </PropertyGroup>

@@ -1,4 +1,4 @@
-namespace AGH.Shared.Items
+namespace AGH_Voice_Chat_Client.Game.Items
 {
     /// <summary>
     /// Defines basic metadata for an item (not an ECS component).

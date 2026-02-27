@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Metrics;
 using Serilog;
 
@@ -8,39 +7,17 @@ namespace AGX_Voice_Chat_Server
 {
     internal abstract class Program
     {
-        static void Main(string[] args)
+        private const int VoicePort = 10515;
+        private const int MetricsPort = 9090;
+
+        private static void Main(string[] args)
         {
             Log.Logger = new LoggerConfiguration()
                 .WriteTo.Console()
                 .MinimumLevel.Verbose()
                 .CreateLogger();
 
-            Log.Information("Starting AGH Server...");
-
-            // Parse port from command line arguments
-            var gamePort = 10515; // Default game port
-            var metricsPort = 9090; // Default metrics port
-
-            if (args.Length > 0)
-            {
-                for (var i = 0; i < args.Length; i++)
-                {
-                    if (args[i] == "--port" && i + 1 < args.Length)
-                    {
-                        if (int.TryParse(args[i + 1], out var customPort))
-                        {
-                            gamePort = customPort;
-                        }
-                    }
-                    else if (args[i] == "--metrics-port" && i + 1 < args.Length)
-                    {
-                        if (int.TryParse(args[i + 1], out var customMetricsPort))
-                        {
-                            metricsPort = customMetricsPort;
-                        }
-                    }
-                }
-            }
+                Log.Information("Starting AGH Voice Server...");
 
             try
             {
@@ -60,19 +37,19 @@ namespace AGX_Voice_Chat_Server
                             .AddPrometheusExporter();
                     });
 
-                // Add singleton server instance with game port configuration
-                builder.Services.AddSingleton(sp => new Server { GamePort = gamePort });
+                // Add singleton server instance with voice port configuration
+                builder.Services.AddSingleton(sp => new Server { VoicePort = VoicePort });
                 builder.Services.AddHostedService<ServerHostedService>();
 
                 // Configure web server to listen on specific port
                 var app = builder.Build();
-                app.Urls.Add($"http://localhost:{metricsPort}");
+                app.Urls.Add($"http://localhost:{MetricsPort}");
 
                 // Map Prometheus scraping endpoint
                 app.MapPrometheusScrapingEndpoint();
 
-                Log.Information("Metrics endpoint available at http://localhost:{MetricsPort}/metrics", metricsPort);
-                Log.Information("Game server will start on port {GamePort}", gamePort);
+                Log.Information("Metrics endpoint available at http://localhost:{MetricsPort}/metrics", MetricsPort);
+                Log.Information("Voice server will start on port {VoicePort}", VoicePort);
 
                 app.Run();
             }
@@ -83,24 +60,6 @@ namespace AGX_Voice_Chat_Server
             finally
             {
                 Log.CloseAndFlush();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Hosted service to run the game server loop in the background.
-    /// </summary>
-    public class ServerHostedService(Server server) : BackgroundService
-    {
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            try
-            {
-                await Task.Run(() => server.Start(server.GamePort, stoppingToken), stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                Log.Information("Server shutdown requested.");
             }
         }
     }

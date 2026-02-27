@@ -1,5 +1,4 @@
 using System.Text;
-using AGH_Voice_Chat_Shared;
 using AGH_Voice_Chat_Shared.Packets;
 using LiteNetLib;
 using LiteNetLib.Utils;
@@ -27,7 +26,7 @@ namespace AGX_Voice_Chat_Server
         private bool TryGetPlayerId(NetPeer peer, out Guid playerId) =>
             _peerToPlayerId.TryGetValue(peer, out playerId);
 
-        private IEnumerable<NetPeer> GetPeersExcept(NetPeer exclude)
+        private IEnumerable<NetPeer> GetPeersExcept(NetPeer? exclude)
         {
             foreach (var kvp in _peerToPlayerId)
             {
@@ -262,8 +261,8 @@ namespace AGX_Voice_Chat_Server
                 list.AddRange(utf8);
             }
 
-            list.Add((byte)(DissonanceMagic >> 8));
-            list.Add((byte)(DissonanceMagic & 0xFF));
+            list.Add(DissonanceMagic >> 8);
+            list.Add(DissonanceMagic & 0xFF);
             list.Add(HandshakeResponse);
             list.Add((byte)((session >> 24) & 0xFF));
             list.Add((byte)((session >> 16) & 0xFF));
@@ -301,8 +300,8 @@ namespace AGX_Voice_Chat_Server
         private void SendErrorWrongSession(NetPeer peer)
         {
             var buf = new byte[11];
-            buf[0] = (byte)(DissonanceMagic >> 8);
-            buf[1] = (byte)(DissonanceMagic & 0xFF);
+            buf[0] = DissonanceMagic >> 8;
+            buf[1] = DissonanceMagic & 0xFF;
             buf[2] = ErrorWrongSession;
             buf[3] = (byte)((_sessionId >> 24) & 0xFF);
             buf[4] = (byte)((_sessionId >> 16) & 0xFF);
@@ -324,7 +323,7 @@ namespace AGX_Voice_Chat_Server
         /// </summary>
         private void ProcessClientState(byte[] data, NetPeer fromPeer)
         {
-            if (data == null || data.Length < 10)
+            if (data.Length < 10)
                 return;
 
             // Validate session
@@ -353,7 +352,7 @@ namespace AGX_Voice_Chat_Server
         /// </summary>
         private void ProcessDeltaClientState(byte[] data, NetPeer fromPeer)
         {
-            if (data == null || data.Length < 12)
+            if (data.Length < 12)
                 return;
 
             // Validate session
@@ -383,7 +382,7 @@ namespace AGX_Voice_Chat_Server
         /// </summary>
         private void ProcessTextData(byte[] data, NetPeer fromPeer)
         {
-            if (data == null || data.Length < 13)
+            if (data.Length < 13)
                 return;
 
             // Validate session
@@ -450,8 +449,8 @@ namespace AGX_Voice_Chat_Server
 
             // Build RemoveClient packet
             var buf = new byte[11];
-            buf[0] = (byte)(DissonanceMagic >> 8);
-            buf[1] = (byte)(DissonanceMagic & 0xFF);
+            buf[0] = DissonanceMagic >> 8;
+            buf[1] = DissonanceMagic & 0xFF;
             buf[2] = RemoveClient;
             buf[3] = (byte)((_sessionId >> 24) & 0xFF);
             buf[4] = (byte)((_sessionId >> 16) & 0xFF);
@@ -515,58 +514,52 @@ namespace AGX_Voice_Chat_Server
 
             var packetType = packet.Data[2];
 
-            // Handle HandshakeRequest
-            if (packetType == HandshakeRequest)
+            switch (packetType)
             {
-                Log.Information("Received Dissonance HandshakeRequest from peer {Address}", fromPeer.Address);
-
-                if (!TryGetPlayerId(fromPeer, out var fromPlayerId))
-                    return;
-
-                if (!_dissonanceClientIds.TryGetValue(fromPlayerId, out var clientId))
+                // Handle HandshakeRequest
+                case HandshakeRequest:
                 {
-                    clientId = _nextClientId++;
-                    _dissonanceClientIds[fromPlayerId] = clientId;
-                    _clientIdToPlayerId[clientId] = fromPlayerId;
-                    Log.Information("Assigned Dissonance clientId {ClientId} to player {PlayerId}", clientId, fromPlayerId);
+                    Log.Information("Received Dissonance HandshakeRequest from peer {Address}", fromPeer.Address);
+
+                    if (!TryGetPlayerId(fromPeer, out var fromPlayerId))
+                        return;
+
+                    if (!_dissonanceClientIds.TryGetValue(fromPlayerId, out var clientId))
+                    {
+                        clientId = _nextClientId++;
+                        _dissonanceClientIds[fromPlayerId] = clientId;
+                        _clientIdToPlayerId[clientId] = fromPlayerId;
+                        Log.Information("Assigned Dissonance clientId {ClientId} to player {PlayerId}", clientId, fromPlayerId);
+                    }
+
+                    // Parse HandshakeRequest body (codecSettings then name) so we can store and include in future handshakes
+                    ParseHandshakeRequest(packet.Data, clientId);
+
+                    var response = BuildHandshakeResponse(_sessionId, clientId);
+                    SendVoiceFromTo(fromPeer, Guid.Empty, response, true);
+                    Log.Information("Sent Dissonance HandshakeResponse to peer {PlayerId}, clientId {ClientId}, sessionId {SessionId}", fromPlayerId, clientId, _sessionId);
+                    return;
                 }
-
-                // Parse HandshakeRequest body (codecSettings then name) so we can store and include in future handshakes
-                ParseHandshakeRequest(packet.Data, clientId);
-
-                var response = BuildHandshakeResponse(_sessionId, clientId);
-                SendVoiceFromTo(fromPeer, Guid.Empty, response, true);
-                Log.Information("Sent Dissonance HandshakeResponse to peer {PlayerId}, clientId {ClientId}, sessionId {SessionId}", fromPlayerId, clientId, _sessionId);
-                return;
-            }
-
-            // Handle ServerRelay packets
-            if (packetType == ServerRelayReliable || packetType == ServerRelayUnreliable)
-            {
-                var reliable = packetType == ServerRelayReliable;
-                ProcessServerRelay(packet.Data, fromPeer, reliable);
-                return;
-            }
-
-            // Handle ClientState
-            if (packetType == ClientState)
-            {
-                ProcessClientState(packet.Data, fromPeer);
-                return;
-            }
-
-            // Handle DeltaChannelState
-            if (packetType == DeltaChannelState)
-            {
-                ProcessDeltaClientState(packet.Data, fromPeer);
-                return;
-            }
-
-            // Handle TextData
-            if (packetType == TextData)
-            {
-                ProcessTextData(packet.Data, fromPeer);
-                return;
+                // Handle ServerRelay packets
+                case ServerRelayReliable:
+                case ServerRelayUnreliable:
+                {
+                    var reliable = packetType == ServerRelayReliable;
+                    ProcessServerRelay(packet.Data, fromPeer, reliable);
+                    return;
+                }
+                // Handle ClientState
+                case ClientState:
+                    ProcessClientState(packet.Data, fromPeer);
+                    return;
+                // Handle DeltaChannelState
+                case DeltaChannelState:
+                    ProcessDeltaClientState(packet.Data, fromPeer);
+                    return;
+                // Handle TextData
+                case TextData:
+                    ProcessTextData(packet.Data, fromPeer);
+                    return;
             }
 
             // Drop server-only messages
@@ -585,7 +578,7 @@ namespace AGX_Voice_Chat_Server
 
             var destinations = GetPeersExcept(fromPeer).ToList();
 
-            Log.Information("There are " + destinations.Count + " other peers to relay to");
+            Log.Information("There are {PeersCount} other peers to relay to.", destinations.Count);
 
             foreach (var peer in destinations)
             {
@@ -597,7 +590,7 @@ namespace AGX_Voice_Chat_Server
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning(ex, "Failed to relay voice to peer {Address}", peer.Address);
+                    Log.Warning(ex, "Failed to relay voice to peer {Address}.", peer.Address);
                 }
             }
         }
@@ -621,7 +614,7 @@ namespace AGX_Voice_Chat_Server
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to relay voice to player {TargetId}", packet.TargetPlayerId);
+                Log.Warning(ex, "Failed to relay voice to player {TargetId}.", packet.TargetPlayerId);
             }
         }
     }

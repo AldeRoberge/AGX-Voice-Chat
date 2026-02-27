@@ -83,8 +83,8 @@ namespace AGH.Voice
             // 4. JoinResponsePacket
             RegisterNested<JoinResponsePacket>();
 
-            // 5. InputCommand
-            RegisterStub<InputCommand>();
+            // 5. PlayerPositionPacket (client sends position; server stores and broadcasts)
+            RegisterStub<PlayerPositionPacket>();
 
             // 6. WorldSnapshot (server sends at 30Hz — most frequent packet)
             RegisterStub<WorldSnapshot>();

@@ -2,12 +2,10 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
-using AGH.Shared;
-using Friflo.Engine.ECS;
+using AGH_Voice_Chat_Client.Game;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using Serilog;
-using static AGH_VOice_Chat_Client.LoggingConfig;
 
 namespace AGX_Voice_Chat_Server
 {
@@ -23,7 +21,7 @@ namespace AGX_Voice_Chat_Server
         private volatile bool _isRunning = true;
         private const double TickWarningThresholdMs = 20.0;
 
-        public int GamePort { get; init; } = 10515;
+        public int VoicePort { get; init; } = 10515;
 
         public Server()
         {
@@ -45,14 +43,13 @@ namespace AGX_Voice_Chat_Server
 
             // Subscribe to packets
             _packetProcessor.SubscribeReusable<JoinRequestPacket, NetPeer>(OnJoinRequest);
-            _packetProcessor.SubscribeReusable<InputCommand, NetPeer>(OnInputCommand);
+            _packetProcessor.SubscribeReusable<PlayerPositionPacket, NetPeer>(OnPlayerPosition);
             _packetProcessor.SubscribeReusable<PingPacket, NetPeer>(OnPing);
             _packetProcessor.SubscribeReusable<ChatMessagePacket, NetPeer>(OnTextMessage);
 
             // Dissonance voice chat relay (all voice logic lives in DissonanceVoiceModule)
             _voiceModule = new DissonanceVoiceModule(_packetProcessor, _peers, _metrics);
             _voiceModule.Register();
-
         }
 
         public void Start(int port = 10515, CancellationToken cancellationToken = default)
@@ -166,38 +163,14 @@ namespace AGX_Voice_Chat_Server
 
         private void BroadcastSnapshot()
         {
-            // Handle player respawns
-            foreach (var playerId in _world.PlayersToRespawn)
+            var snapshot = _world.GenerateSnapshot();
+            foreach (var peer in _peers.Keys)
             {
-                _world.RespawnPlayer(playerId);
-                SendMessage(playerId, "You fell!");
-            }
-
-            _world.PlayersToRespawn.Clear();
-
-            var baseSnapshot = _world.GenerateSnapshot();
-
-            foreach (var kvp in _peers)
-            {
-                var peer = kvp.Key;
-                var playerId = kvp.Value;
-
-                // Customize snapshot with player-specific last processed tick
-                var snapshot = baseSnapshot;
-                snapshot.LastProcessedInputTick = _world.GetLastProcessedInputTick(playerId);
-
                 var writer = new NetDataWriter();
                 _packetProcessor.Write(writer, snapshot);
-
                 if (writer.Length > 800)
                     Log.Warning("Large snapshot packet: {Size} bytes (Players: {PlayerCount})", writer.Length, snapshot.Players.Length);
-
-                // Use ReliableSequenced instead of Unreliable to support fragmentation for large packets
-                // ReliableSequenced provides fragmentation support while still being relatively fast
-                // and ensuring only the latest snapshot matters
                 peer.Send(writer, DeliveryMethod.ReliableSequenced);
-
-                // Record network metrics
                 _metrics.RecordBytesSent(writer.Length);
                 _metrics.RecordPacketSent();
             }
@@ -229,7 +202,7 @@ namespace AGX_Voice_Chat_Server
         /// <summary>
         /// Broadcasts a text message to all connected players.
         /// </summary>
-        public void BroadcastMessage(string message, TextMessageType messageType = TextMessageType.Chat)
+        private void BroadcastMessage(string message, TextMessageType messageType = TextMessageType.Chat)
         {
             var textPacket = new TextPacket
             {
@@ -313,16 +286,12 @@ namespace AGX_Voice_Chat_Server
             }
         }
 
-        private void OnInputCommand(InputCommand packet, NetPeer peer)
+        private void OnPlayerPosition(PlayerPositionPacket packet, NetPeer peer)
         {
             if (_peers.TryGetValue(peer, out var playerId))
-            {
-                _world.BufferInput(playerId, packet);
-            }
+                _world.SetPlayerPosition(playerId, packet.Position);
             else
-            {
-                Log.Warning("Received input from unknown peer {PeerId}", peer.Id);
-            }
+                Log.Warning("Received position from unknown peer {PeerId}", peer.Id);
         }
 
         private void OnPing(PingPacket packet, NetPeer peer)

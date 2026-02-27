@@ -2,7 +2,7 @@ using System.Numerics;
 using AGH_Voice_Chat_Shared.Packets;
 using LiteNetLib.Utils;
 
-namespace AGH.Shared
+namespace AGH_Voice_Chat_Client.Game
 {
     public static class NetworkRegistration
     {
@@ -46,12 +46,12 @@ namespace AGH.Shared
                     return p;
                 });
 
-            // Register input packets
-            packetProcessor.RegisterNestedType<InputCommand>(
+            // Register position packet (client sends position; server stores and broadcasts)
+            packetProcessor.RegisterNestedType<PlayerPositionPacket>(
                 (writer, p) => p.Serialize(writer),
                 reader =>
                 {
-                    var p = new InputCommand();
+                    var p = new PlayerPositionPacket();
                     p.Deserialize(reader);
                     return p;
                 });
@@ -214,16 +214,6 @@ namespace AGH.Shared
                 reader =>
                 {
                     var p = new VoxelPaintRequestPacket();
-                    p.Deserialize(reader);
-                    return p;
-                });
-
-            // Register status effect packets
-            packetProcessor.RegisterNestedType<StatEffectChanged>(
-                (writer, p) => p.Serialize(writer),
-                reader =>
-                {
-                    var p = new StatEffectChanged();
                     p.Deserialize(reader);
                     return p;
                 });

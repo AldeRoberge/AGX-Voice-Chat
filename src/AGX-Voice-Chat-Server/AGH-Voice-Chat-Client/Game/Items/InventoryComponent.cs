@@ -1,8 +1,7 @@
 using System;
 using MessagePack;
 
-
-namespace AGH.Shared.Items
+namespace AGH_Voice_Chat_Client.Game.Items
 {
     /// <summary>
     /// Represents a player's inventory with 9 slots (indexed 0-8).

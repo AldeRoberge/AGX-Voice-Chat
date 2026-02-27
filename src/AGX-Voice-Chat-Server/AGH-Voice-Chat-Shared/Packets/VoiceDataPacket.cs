@@ -9,7 +9,7 @@ namespace AGH_Voice_Chat_Shared.Packets
     /// </summary>
     public class VoiceDataPacket : INetSerializable
     {
-        public byte[] Data { get; set; } = Array.Empty<byte>();
+        public byte[] Data { get; set; } = [];
         public bool Reliable { get; set; }
 
         public void Serialize(NetDataWriter writer)

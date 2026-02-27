@@ -41,41 +41,23 @@ namespace AGH.Shared
     }
 
     // ============================================================================
-    // INPUT PACKETS (client-to-server, but must be registered for type hash matching)
+    // POSITION PACKET (client sends position to server)
     // ============================================================================
 
-    public class InputCommand : INetSerializable
+    public class PlayerPositionPacket : INetSerializable
     {
-        public uint Tick { get; set; }
-        public Vector3 MoveDirection { get; set; }
-        public float Rotation { get; set; }
-        public bool Fire { get; set; }
-        public bool Jump { get; set; }
-        public bool IsDashing { get; set; }
-        public bool IsCrouching { get; set; }
+        public Vector3 Position { get; set; }
 
         public void Serialize(NetDataWriter writer)
         {
-            writer.Put(Tick);
-            writer.Put(MoveDirection.x);
-            writer.Put(MoveDirection.y);
-            writer.Put(MoveDirection.z);
-            writer.Put(Rotation);
-            writer.Put(Fire);
-            writer.Put(Jump);
-            writer.Put(IsDashing);
-            writer.Put(IsCrouching);
+            writer.Put(Position.x);
+            writer.Put(Position.y);
+            writer.Put(Position.z);
         }
 
         public void Deserialize(NetDataReader reader)
         {
-            Tick = reader.GetUInt();
-            MoveDirection = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Rotation = reader.GetFloat();
-            Fire = reader.GetBool();
-            Jump = reader.GetBool();
-            IsDashing = reader.GetBool();
-            IsCrouching = reader.GetBool();
+            Position = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
         }
     }
 
@@ -86,7 +68,6 @@ namespace AGH.Shared
     public class WorldSnapshot : INetSerializable
     {
         public uint Tick { get; set; }
-        public uint LastProcessedInputTick { get; set; }
         public PlayerState[] Players { get; set; } = Array.Empty<PlayerState>();
         public ProjectileState[] Projectiles { get; set; } = Array.Empty<ProjectileState>();
         public BoxState[] Boxes { get; set; } = Array.Empty<BoxState>();
@@ -98,7 +79,6 @@ namespace AGH.Shared
         public void Deserialize(NetDataReader reader)
         {
             Tick = reader.GetUInt();
-            LastProcessedInputTick = reader.GetUInt();
 
             ushort playerCount = reader.GetUShort();
             Players = new PlayerState[playerCount];
@@ -130,10 +110,7 @@ namespace AGH.Shared
     {
         public Guid Id { get; set; }
         public Vector3 Position { get; set; }
-        public Vector3 Velocity { get; set; }
-        public float Rotation { get; set; }
         public string Name { get; set; } = string.Empty;
-        public byte[] HealthData { get; set; } = Array.Empty<byte>();
 
         public void Serialize(NetDataWriter writer)
         {
@@ -143,10 +120,7 @@ namespace AGH.Shared
         {
             Id = new Guid(reader.GetBytesWithLength());
             Position = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Velocity = new Vector3(reader.GetFloat(), reader.GetFloat(), reader.GetFloat());
-            Rotation = reader.GetFloat();
             Name = NetIOHelper.GetLargeString(reader);
-            HealthData = reader.GetBytesWithLength();
         }
     }
 

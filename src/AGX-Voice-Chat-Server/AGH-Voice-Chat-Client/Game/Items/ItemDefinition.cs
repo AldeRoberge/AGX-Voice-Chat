@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace AGH.Shared.Items
+namespace AGH_Voice_Chat_Client.Game.Items
 {
     /// <summary>
     /// Complete item definition combining metadata and use effects.
