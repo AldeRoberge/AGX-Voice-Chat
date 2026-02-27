@@ -1,5 +1,6 @@
 using System.Numerics;
 using AGH_Voice_Chat_Client.Game;
+using AGH_Voice_Chat_Shared;
 using Friflo.Engine.ECS;
 using Serilog;
 
@@ -45,19 +46,6 @@ namespace AGX_Voice_Chat_Server
                 entity.DeleteEntity();
                 Log.Information("Player {PlayerId} removed", playerId);
             }
-        }
-
-        /// <summary>
-        /// Gets a safe spawn position for a player.
-        /// </summary>
-        public Vector3 GetSpawnPosition()
-        {
-            var random = new Random();
-            float spawnX = (float)(random.NextDouble() * 200 - 100);
-            float spawnY = (float)(random.NextDouble() * 200 - 100);
-            float terrainHeight = GetTerrainHeight(spawnX, spawnY);
-            float spawnZ = terrainHeight + 10f;
-            return new Vector3(spawnX, spawnY, spawnZ);
         }
 
         /// <summary>
@@ -119,17 +107,6 @@ namespace AGX_Voice_Chat_Server
                 Tick = _currentTick,
                 Players = players.ToArray()
             };
-        }
-
-        /// <summary>
-        /// Gets the name of a player.
-        /// </summary>
-        public string GetPlayerName(Guid playerId)
-        {
-            var entity = FindPlayerEntity(playerId);
-            if (!entity.IsNull)
-                return entity.GetComponent<NameComponent>().Name;
-            return "Unknown";
         }
 
         public bool ShouldBroadcastSnapshot()

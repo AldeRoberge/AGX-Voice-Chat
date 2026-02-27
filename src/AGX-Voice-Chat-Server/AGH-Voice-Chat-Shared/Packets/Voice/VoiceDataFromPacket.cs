@@ -1,7 +1,7 @@
 using System;
 using LiteNetLib.Utils;
 
-namespace AGH_Voice_Chat_Shared.Packets
+namespace AGH_Voice_Chat_Shared.Packets.Voice
 {
     /// <summary>
     /// Voice data relayed from server to clients. Includes sender so Dissonance can route by peer.

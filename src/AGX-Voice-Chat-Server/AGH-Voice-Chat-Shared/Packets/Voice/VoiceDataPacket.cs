@@ -1,7 +1,6 @@
-using System;
 using LiteNetLib.Utils;
 
-namespace AGH_Voice_Chat_Shared.Packets
+namespace AGH_Voice_Chat_Shared.Packets.Voice
 {
     /// <summary>
     /// Opaque voice data for Dissonance voice chat relay (client -> server).

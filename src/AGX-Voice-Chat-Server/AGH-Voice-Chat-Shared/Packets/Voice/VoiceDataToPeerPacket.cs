@@ -1,7 +1,7 @@
 ﻿using System;
 using LiteNetLib.Utils;
 
-namespace AGH_Voice_Chat_Shared.Packets
+namespace AGH_Voice_Chat_Shared.Packets.Voice
 {
     /// <summary>
     /// Voice data from host (Dissonance server) targeting one client. Server relays to that peer only.

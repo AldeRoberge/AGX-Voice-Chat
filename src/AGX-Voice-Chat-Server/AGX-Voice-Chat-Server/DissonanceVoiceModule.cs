@@ -1,5 +1,6 @@
 using System.Text;
 using AGH_Voice_Chat_Shared.Packets;
+using AGH_Voice_Chat_Shared.Packets.Voice;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using Serilog;
