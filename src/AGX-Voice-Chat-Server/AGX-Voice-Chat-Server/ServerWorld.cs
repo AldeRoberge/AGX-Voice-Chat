@@ -117,9 +117,7 @@ namespace AGX_Voice_Chat_Server
             return new WorldSnapshot
             {
                 Tick = _currentTick,
-                Players = players.ToArray(),
-                Projectiles = Array.Empty<ProjectileState>(),
-                Boxes = Array.Empty<BoxState>()
+                Players = players.ToArray()
             };
         }
 

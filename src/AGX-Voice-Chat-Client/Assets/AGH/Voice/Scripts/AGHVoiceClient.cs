@@ -62,99 +62,27 @@ namespace AGH.Voice
         }
 
         /// <summary>
-        /// Register ALL packet types in the EXACT SAME ORDER as the server's NetworkRegistration.RegisterTypes.
-        /// This ensures LiteNetLib type hashes match and ReadAllPackets can handle every server packet.
+        /// Register packet types in the SAME ORDER as the server's NetworkRegistration.RegisterTypes.
         /// </summary>
         private void RegisterTypes()
         {
-            // 1. Vector2 (server uses System.Numerics.Vector2; we use UnityEngine.Vector2)
             _packetProcessor.RegisterNestedType(
                 (w, v) => { w.Put(v.x); w.Put(v.y); },
                 r => new Vector2(r.GetFloat(), r.GetFloat()));
-
-            // 2. Vector3 (server uses System.Numerics.Vector3; we use UnityEngine.Vector3)
             _packetProcessor.RegisterNestedType(
                 (w, v) => { w.Put(v.x); w.Put(v.y); w.Put(v.z); },
                 r => new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat()));
 
-            // 3. JoinRequestPacket
             RegisterNested<JoinRequestPacket>();
-
-            // 4. JoinResponsePacket
             RegisterNested<JoinResponsePacket>();
-
-            // 5. PlayerPositionPacket (client sends position; server stores and broadcasts)
             RegisterStub<PlayerPositionPacket>();
-
-            // 6. WorldSnapshot (server sends at 30Hz — most frequent packet)
             RegisterStub<WorldSnapshot>();
-
-            // 7. PlayerState (nested in WorldSnapshot, but also registered as top-level)
             RegisterStub<PlayerState>();
-
-            // 8. ProjectileState
-            RegisterStub<ProjectileState>();
-
-            // 9. BoxState
-            RegisterStub<BoxState>();
-
-            // 10. PingPacket
             RegisterStub<PingPacket>();
-
-            // 11. PongPacket (server sends in response to ping)
             RegisterStub<PongPacket>();
-
-            // 12. PlayerInfoPacket (server sends on join)
             RegisterStub<PlayerInfoPacket>();
 
-            // 13. TextPacket (server sends messages)
-            RegisterStub<TextPacket>();
-
-            // 14. ChatMessagePacket
-            RegisterStub<ChatMessagePacket>();
-
-            // 15-17. Voice packets (VoiceDataPacket, VoiceDataFromPacket, VoiceDataToPeerPacket)
             AGHVoiceNetworkRegistration.RegisterVoicePackets(_packetProcessor);
-
-            // 18. BlockUpdate (struct — server registers with 6 fields, no Data)
-            _packetProcessor.RegisterNestedType(
-                (w, b) =>
-                {
-                    w.Put(b.LocalX); w.Put(b.LocalY); w.Put(b.LocalZ);
-                    w.Put(b.Exists); w.Put(b.BlockType); w.Put(b.Health);
-                },
-                r => new BlockUpdate
-                {
-                    LocalX = r.GetByte(), LocalY = r.GetByte(), LocalZ = r.GetByte(),
-                    Exists = r.GetByte(), BlockType = r.GetByte(), Health = r.GetByte()
-                });
-
-            // 19. ChunkCreatePacket (server sends on join)
-            RegisterStub<ChunkCreatePacket>();
-
-            // 20. ChunkUpdatePacket (server sends on block change)
-            RegisterStub<ChunkUpdatePacket>();
-
-            // 21. VoxelPaintRequestPacket (client-to-server, but registered for hash matching)
-            RegisterStub<VoxelPaintRequestPacket>();
-
-            // 22. StatEffectChanged (server sends status effects)
-            RegisterStub<StatEffectChanged>();
-
-            // 23. ItemUseAction (client-to-server, registered for hash matching)
-            RegisterStub<ItemUseAction>();
-
-            // 24. ItemUsedEvent (server broadcasts on item use)
-            RegisterStub<ItemUsedEvent>();
-
-            // 25. InventorySlotSwitchedAction (client-to-server, registered for hash matching)
-            RegisterStub<InventorySlotSwitchedAction>();
-
-            // 26. InventorySlotSwitchedEvent (server broadcasts on slot switch)
-            RegisterStub<InventorySlotSwitchedEvent>();
-
-            // 27. InventoryFullSyncPacket (server sends on join)
-            RegisterStub<InventoryFullSyncPacket>();
         }
 
         private void RegisterNested<T>() where T : class, INetSerializable, new()

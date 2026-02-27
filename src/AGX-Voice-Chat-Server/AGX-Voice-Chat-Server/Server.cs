@@ -45,7 +45,6 @@ namespace AGX_Voice_Chat_Server
             _packetProcessor.SubscribeReusable<JoinRequestPacket, NetPeer>(OnJoinRequest);
             _packetProcessor.SubscribeReusable<PlayerPositionPacket, NetPeer>(OnPlayerPosition);
             _packetProcessor.SubscribeReusable<PingPacket, NetPeer>(OnPing);
-            _packetProcessor.SubscribeReusable<ChatMessagePacket, NetPeer>(OnTextMessage);
 
             // Dissonance voice chat relay (all voice logic lives in DissonanceVoiceModule)
             _voiceModule = new DissonanceVoiceModule(_packetProcessor, _peers, _metrics);
@@ -176,51 +175,6 @@ namespace AGX_Voice_Chat_Server
             }
         }
 
-        /// <summary>
-        /// Sends a text message to a specific player.
-        /// </summary>
-        public void SendMessage(Guid playerId, string message, TextMessageType messageType = TextMessageType.System)
-        {
-            // Find the peer for this player
-            var peer = _peers.FirstOrDefault(kvp => kvp.Value == playerId).Key;
-            if (peer == null) return;
-
-            var textPacket = new TextPacket
-            {
-                Message = message,
-                MessageType = messageType
-            };
-            var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, textPacket);
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
-
-            // Record network metrics
-            _metrics.RecordBytesSent(writer.Length);
-            _metrics.RecordPacketSent();
-        }
-
-        /// <summary>
-        /// Broadcasts a text message to all connected players.
-        /// </summary>
-        private void BroadcastMessage(string message, TextMessageType messageType = TextMessageType.Chat)
-        {
-            var textPacket = new TextPacket
-            {
-                Message = message,
-                MessageType = messageType
-            };
-            var writer = new NetDataWriter();
-            _packetProcessor.Write(writer, textPacket);
-            foreach (var peer in _peers.Keys)
-            {
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
-
-                // Record network metrics
-                _metrics.RecordBytesSent(writer.Length);
-                _metrics.RecordPacketSent();
-            }
-        }
-
         private void OnJoinRequest(JoinRequestPacket packet, NetPeer peer)
         {
             if (_peers.ContainsKey(peer))
@@ -259,9 +213,6 @@ namespace AGX_Voice_Chat_Server
             peer.Send(writer, DeliveryMethod.ReliableOrdered);
 
             BroadcastPlayerInfo(playerId, packet.PlayerName, 100);
-
-            // Send welcome message
-            SendMessage(playerId, $"Welcome to the server, {packet.PlayerName}!");
         }
 
         /// <summary>
@@ -300,20 +251,6 @@ namespace AGX_Voice_Chat_Server
             var writer = new NetDataWriter();
             _packetProcessor.Write(writer, pong);
             peer.Send(writer, DeliveryMethod.Unreliable);
-        }
-
-        private void OnTextMessage(ChatMessagePacket packet, NetPeer peer)
-        {
-            if (_peers.TryGetValue(peer, out var playerId))
-            {
-                var playerName = _world.GetPlayerName(playerId);
-                var fullMessage = $"{playerName}: {packet.Message}";
-                BroadcastMessage(fullMessage);
-            }
-            else
-            {
-                Log.Warning("Received text message from unknown peer {PeerId}", peer.Id);
-            }
         }
 
         // INetEventListener implementation
@@ -370,15 +307,6 @@ namespace AGX_Voice_Chat_Server
 
                 // Record error metric
                 _metrics.ErrorsTotal.Add(1, new KeyValuePair<string, object?>("type", "parse"), new KeyValuePair<string, object?>("subsystem", "network"));
-
-                var textPacket = new TextPacket
-                {
-                    Message = "Invalid packet.",
-                    MessageType = TextMessageType.Error
-                };
-                var writer = new NetDataWriter();
-                _packetProcessor.Write(writer, textPacket);
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
             }
         }
 
