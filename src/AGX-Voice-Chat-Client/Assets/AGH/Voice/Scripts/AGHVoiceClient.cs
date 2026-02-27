@@ -1,13 +1,13 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using AGH_Voice_Chat_Client.Game;
 using AGH_Voice_Chat_Shared.Packets;
-using AGH.Shared;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Connects the Unity client to the AGH server and starts Dissonance voice chat once joined.
@@ -47,7 +47,9 @@ namespace AGH.Voice
 
             _packetProcessor = new NetPacketProcessor();
             RegisterTypes();
-            _packetProcessor.SubscribeReusable<JoinResponsePacket>(OnJoinResponse);
+            // Use SubscribeNetSerializable so deserialization uses our RegisterNestedType (INetSerializable)
+            // and never reflects on the type (which would try to register System.Numerics.Vector3 and fail).
+            _packetProcessor.SubscribeNetSerializable<JoinResponsePacket>(OnJoinResponse);
             AGHVoiceNetworkRegistration.SubscribeVoiceFrom(_packetProcessor, OnVoiceDataFrom);
 
             _netManager = new NetManager(this)
@@ -67,10 +69,19 @@ namespace AGH.Voice
         private void RegisterTypes()
         {
             _packetProcessor.RegisterNestedType(
-                (w, v) => { w.Put(v.x); w.Put(v.y); },
+                (w, v) =>
+                {
+                    w.Put(v.x);
+                    w.Put(v.y);
+                },
                 r => new Vector2(r.GetFloat(), r.GetFloat()));
             _packetProcessor.RegisterNestedType(
-                (w, v) => { w.Put(v.x); w.Put(v.y); w.Put(v.z); },
+                (w, v) =>
+                {
+                    w.Put(v.x);
+                    w.Put(v.y);
+                    w.Put(v.z);
+                },
                 r => new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat()));
 
             RegisterNested<JoinRequestPacket>();
@@ -89,14 +100,24 @@ namespace AGH.Voice
         {
             _packetProcessor.RegisterNestedType(
                 (w, p) => p.Serialize(w),
-                r => { var p = new T(); p.Deserialize(r); return p; });
+                r =>
+                {
+                    var p = new T();
+                    p.Deserialize(r);
+                    return p;
+                });
         }
 
         private void RegisterStub<T>() where T : class, INetSerializable, new()
         {
             _packetProcessor.RegisterNestedType(
                 (w, p) => p.Serialize(w),
-                r => { var p = new T(); p.Deserialize(r); return p; });
+                r =>
+                {
+                    var p = new T();
+                    p.Deserialize(r);
+                    return p;
+                });
             // Use SubscribeNetSerializable so we deserialize via INetSerializable.Deserialize
             // instead of NetSerializer (which does not support array types like PlayerState[]).
             _packetProcessor.SubscribeNetSerializable<T>(_ => { });

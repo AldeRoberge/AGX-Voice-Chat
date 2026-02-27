@@ -1,6 +1,6 @@
 using System;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Transport for Dissonance voice over the AGH game connection.

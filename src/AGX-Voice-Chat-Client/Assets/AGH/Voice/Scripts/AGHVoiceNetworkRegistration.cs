@@ -3,7 +3,7 @@ using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Registers AGH voice packet types with a LiteNetLib NetPacketProcessor so the wire format matches the server.

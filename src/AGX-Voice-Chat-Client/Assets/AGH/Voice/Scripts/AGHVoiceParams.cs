@@ -1,6 +1,6 @@
 using JetBrains.Annotations;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Parameters passed to the AGH Dissonance comms when starting as client or host.

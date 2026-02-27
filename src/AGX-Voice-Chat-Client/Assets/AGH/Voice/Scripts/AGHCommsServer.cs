@@ -2,7 +2,7 @@ using System;
 using Dissonance.Networking;
 using JetBrains.Annotations;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Stub required by Dissonance BaseCommsNetwork generic. Not used — Unity is client-only; AGH.Server is the only server.

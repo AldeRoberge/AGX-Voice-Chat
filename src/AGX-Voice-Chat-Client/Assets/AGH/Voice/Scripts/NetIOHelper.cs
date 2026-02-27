@@ -1,7 +1,7 @@
 using System.Text;
 using LiteNetLib.Utils;
 
-namespace AGH.Shared
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Helpers to match AGH server wire format (e.g. large string = length-prefixed UTF8).

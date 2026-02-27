@@ -1,11 +1,11 @@
 using System;
-using AGH.Shared;
+using AGH_Voice_Chat_Client.Game;
 using AGH_Voice_Chat_Shared.Packets;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Implements <see cref="IAGHVoiceTransport"/> over LiteNetLib.
@@ -16,8 +16,8 @@ namespace AGH.Voice
     {
         [SerializeField] private string localPlayerIdGuid = "";
 
-        [Tooltip("If set, position is sent to the server at ~20Hz. Otherwise call SendPosition from your game.")]
-        [SerializeField] private Transform positionSource;
+        [Tooltip("If set, position is sent to the server at ~20Hz. Otherwise call SendPosition from your game.")] [SerializeField]
+        private Transform positionSource;
 
         [SerializeField] private float positionSendInterval = 0.05f;
         private float _positionSendAccumulator;
@@ -76,7 +76,7 @@ namespace AGH.Voice
         {
             if (!_isConnected || _serverPeer == null || _packetProcessor == null)
                 return;
-            var packet = new PlayerPositionPacket { Position = position };
+            var packet = new PlayerPositionPacket { Position = new System.Numerics.Vector3(position.x, position.y, position.z) };
             var writer = new NetDataWriter();
             _packetProcessor.Write(writer, packet);
             _serverPeer.Send(writer, 0, DeliveryMethod.Unreliable);

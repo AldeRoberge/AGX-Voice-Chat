@@ -4,7 +4,7 @@ using Dissonance.Networking;
 using JetBrains.Annotations;
 using UnityEngine;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Dissonance comms network that sends/receives voice over the AGH game connection (LiteNetLib).

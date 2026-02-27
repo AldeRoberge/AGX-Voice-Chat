@@ -3,7 +3,7 @@ using Dissonance;
 using TMPro;
 using UnityEngine;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Displays Dissonance voice debug info on a Unity UI Text: device, peers, volume, connection, and other available state.

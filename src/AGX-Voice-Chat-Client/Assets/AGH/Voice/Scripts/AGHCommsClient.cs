@@ -2,7 +2,7 @@ using System;
 using Dissonance.Networking;
 using JetBrains.Annotations;
 
-namespace AGH.Voice
+namespace AGH.Voice.Scripts
 {
     /// <summary>
     /// Dissonance client that sends/receives via the AGH game connection.
