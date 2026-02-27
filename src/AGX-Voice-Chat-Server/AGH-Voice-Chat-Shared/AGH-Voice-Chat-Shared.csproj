@@ -14,8 +14,8 @@
     </ItemGroup>
 
     <PropertyGroup>
-        <!-- Unity project path relative to this .csproj (AGH-Website/AGH.Voice.Shared) -->
-        <UnityVoicePluginsPath>$(MSBuildThisFileDirectory)..\..\AGH-Unity\AGH-Unity-Voice-Chat\Assets\Plugins\AGH.Voice.Shared</UnityVoicePluginsPath>
+        <!-- Unity project path relative to this .csproj -->
+        <UnityVoicePluginsPath>$(MSBuildThisFileDirectory)..\..\AGX-Voice-Chat-Client\Assets\Plugins\AGH.Voice.Shared</UnityVoicePluginsPath>
     </PropertyGroup>
 
 

@@ -1,9 +1,7 @@
 using System.Collections.Generic;
 using Dissonance;
-using Dissonance.Networking;
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace AGH.Voice
 {

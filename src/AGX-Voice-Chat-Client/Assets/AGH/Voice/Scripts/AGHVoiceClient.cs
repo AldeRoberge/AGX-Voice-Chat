@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using AGH_Voice_Chat_Shared.Packets;
 using AGH.Shared;
 using LiteNetLib;
 using LiteNetLib.Utils;

@@ -1,4 +1,4 @@
-using AGH.Shared;
+using AGH_Voice_Chat_Shared.Packets;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
