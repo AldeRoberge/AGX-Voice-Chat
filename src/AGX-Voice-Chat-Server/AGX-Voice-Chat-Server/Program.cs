@@ -14,7 +14,7 @@ namespace AGX_Voice_Chat_Server
         {
             Log.Logger = new LoggerConfiguration()
                 .WriteTo.Console()
-                .MinimumLevel.Verbose()
+                .MinimumLevel.Information()
                 .CreateLogger();
 
             Log.Information("Starting AGX Voice Server...");

@@ -501,7 +501,7 @@ namespace AGX_Voice_Chat_Server
 
         private void OnVoiceDataReceived(VoiceDataPacket packet, NetPeer fromPeer)
         {
-            Log.Information("Received voice data from peer {Address} with Id {Id}, length {Length}, reliable {Reliable}", fromPeer.Address, fromPeer.Id, packet.Data?.Length ?? 0, packet.Reliable);
+            Log.Debug("Received voice data from peer {Address} with Id {Id}, length {Length}, reliable {Reliable}", fromPeer.Address, fromPeer.Id, packet.Data?.Length ?? 0, packet.Reliable);
 
             if (packet.Data == null || packet.Data.Length == 0)
             {
@@ -530,7 +530,7 @@ namespace AGX_Voice_Chat_Server
                         clientId = _nextClientId++;
                         _dissonanceClientIds[fromPlayerId] = clientId;
                         _clientIdToPlayerId[clientId] = fromPlayerId;
-                        Log.Information("Assigned Dissonance clientId {ClientId} to player {PlayerId}", clientId, fromPlayerId);
+                        Log.Information("Assigned Dissonance clientId {ClientId} to player {PlayerId}.", clientId, fromPlayerId);
                     }
 
                     // Parse HandshakeRequest body (codecSettings then name) so we can store and include in future handshakes
@@ -538,7 +538,7 @@ namespace AGX_Voice_Chat_Server
 
                     var response = BuildHandshakeResponse(_sessionId, clientId);
                     SendVoiceFromTo(fromPeer, Guid.Empty, response, true);
-                    Log.Information("Sent Dissonance HandshakeResponse to peer {PlayerId}, clientId {ClientId}, sessionId {SessionId}", fromPlayerId, clientId, _sessionId);
+                    Log.Information("Sent Dissonance HandshakeResponse to peer {PlayerId}, clientId {ClientId}, sessionId {SessionId}.", fromPlayerId, clientId, _sessionId);
                     return;
                 }
                 // Handle ServerRelay packets

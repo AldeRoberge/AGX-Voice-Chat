@@ -63,6 +63,7 @@ namespace AGX_Voice_Chat_Server
                 _pollCount = 0;
             }
         }
+        
 
         private void LogPerformanceSummary()
         {
