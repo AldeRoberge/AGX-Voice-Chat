@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Numerics;
@@ -12,23 +11,34 @@ using Serilog;
 
 namespace AGX_Voice_Chat_Server
 {
+    /// <summary>
+    /// Simple voice + position relay server. No ECS, no snapshots, no tick loop.
+    /// Client joins → Welcome. Client sends position → relay to everyone else. Voice → relay.
+    /// Scales to 250+ players by design (small packets, no full-state broadcasts).
+    /// </summary>
     public class Server : INetEventListener
     {
         private readonly NetManager _netManager;
         private readonly NetPacketProcessor _packetProcessor;
-        private readonly ServerWorld _world;
-        private readonly Dictionary<NetPeer, Guid> _peers = new();
+        private readonly Dictionary<NetPeer, PlayerInfo> _players = new();
         private readonly ServerMetrics _metrics = new();
         private readonly DissonanceVoiceModule _voiceModule;
+        private readonly ServerPerformanceMonitor _performanceMonitor;
 
         private volatile bool _isRunning = true;
-        private const double TickWarningThresholdMs = 20.0;
+        private const float GroundLevel = -300f;
 
         public int VoicePort { get; init; } = 10515;
 
+        private sealed class PlayerInfo
+        {
+            public Guid Id;
+            public string Name = string.Empty;
+            public Vector3 Position;
+        }
+
         public Server()
         {
-            _world = new ServerWorld();
             _packetProcessor = new NetPacketProcessor();
             _netManager = new NetManager(this)
             {
@@ -41,18 +51,24 @@ namespace AGX_Voice_Chat_Server
                 SimulationPacketLossChance = SimulationConfig.SimulationPacketLossChance
             };
 
-            // Register networking types
             NetworkRegistration.RegisterTypes(_packetProcessor);
 
-            // Subscribe to packets
             _packetProcessor.SubscribeReusable<JoinRequestPacket, NetPeer>(OnJoinRequest);
             _packetProcessor.SubscribeReusable<PlayerPositionPacket, NetPeer>(OnPlayerPosition);
             _packetProcessor.SubscribeReusable<PingPacket, NetPeer>(OnPing);
 
-            // Dissonance voice chat relay (all voice logic lives in DissonanceVoiceModule)
-            _voiceModule = new DissonanceVoiceModule(_packetProcessor, _peers, _metrics);
+            // Expose peer -> Guid for voice module
+            var peerToPlayerId = new Dictionary<NetPeer, Guid>();
+            _voiceModule = new DissonanceVoiceModule(_packetProcessor, peerToPlayerId, _metrics);
             _voiceModule.Register();
+
+            // Keep peerToPlayerId in sync with _players (same keys, value = Id)
+            _peerToPlayerId = peerToPlayerId;
+
+            _performanceMonitor = new ServerPerformanceMonitor(_metrics, () => _players.Count);
         }
+
+        private readonly Dictionary<NetPeer, Guid> _peerToPlayerId;
 
         public void Start(int port = 10515, CancellationToken cancellationToken = default)
         {
@@ -62,95 +78,14 @@ namespace AGX_Voice_Chat_Server
                 return;
             }
 
-            Log.Information("Server started on port {Port}", _netManager.LocalPort);
-            Log.Information("Tick rate: {TickRate}Hz | Snapshot rate: {SnapshotRate}Hz",
-                SimulationConfig.ServerTickRate, SimulationConfig.SnapshotRate);
-
-            var stopwatch = Stopwatch.StartNew();
-            var lastTime = stopwatch.Elapsed.TotalSeconds;
-            double accumulator = 0;
-            const double fixedDelta = SimulationConfig.FixedDeltaTime;
-
-            double tickDurationSum = 0;
-            var tickCount = 0;
+            Log.Information("Voice server started on port {Port}.", _netManager.LocalPort);
 
             while (_isRunning && !cancellationToken.IsCancellationRequested)
             {
-                var now = stopwatch.Elapsed.TotalSeconds;
-                var frameTime = now - lastTime;
-                lastTime = now;
-                accumulator += frameTime;
-
-                // Fixed-tick simulation loop
-                while (accumulator >= fixedDelta)
-                {
-                    var tickStart = stopwatch.Elapsed.TotalMilliseconds;
-
-                    // Simulation tick
-                    _world.Tick((float)fixedDelta);
-
-                    // Broadcast snapshot at configured rate (30Hz)
-                    if (_world.ShouldBroadcastSnapshot())
-                    {
-                        BroadcastSnapshot();
-                        _world.ResetSnapshotCounter();
-                    }
-
-                    var tickEnd = stopwatch.Elapsed.TotalMilliseconds;
-                    var tickDuration = tickEnd - tickStart;
-                    tickDurationSum += tickDuration;
-                    tickCount++;
-
-                    // Record tick duration metric
-                    _metrics.TickDuration.Record(tickDuration);
-
-                    // Performance monitoring (log every 10 seconds)
-                    if (tickCount % (SimulationConfig.ServerTickRate * 10) == 0)
-                    {
-                        var playerCount = _peers.Count;
-                        var avgTickDuration = tickDurationSum / tickCount;
-                        var tickBudgetMs = fixedDelta * 1000;
-                        var timeRemainingMs = tickBudgetMs - tickDuration;
-                        var budgetUsedPercent = (tickDuration / tickBudgetMs) * 100;
-                        
-                        string budgetMessage;
-                        if (timeRemainingMs > 10)
-                            budgetMessage = $"Perfect! {timeRemainingMs:F2}ms free";
-                        else if (timeRemainingMs > 0)
-                            budgetMessage = $"Close! {timeRemainingMs:F2}ms free";
-                        else
-                            budgetMessage = $"Overbudget by {Math.Abs(timeRemainingMs):F2}ms!";
-
-
-                        Log.Information("{PlayerCount} Connected Players | Last Tick took {LastTick:F5}ms ({AvgTick:F5}ms average) | {BudgetUsed:F1}% budget used | {BudgetMessage}",
-                            playerCount, tickDuration, avgTickDuration, budgetUsedPercent, budgetMessage);
-
-                        // Update tick rate metric
-                        _metrics.UpdateTickRate(SimulationConfig.ServerTickRate);
-
-                        // Update GC metrics
-                        _metrics.UpdateGcCollections();
-
-                        // Update entity metrics
-                        _metrics.UpdateEntitiesActive(_world.GetEntityCount());
-
-                        tickDurationSum = 0;
-                        tickCount = 0;
-                    }
-
-                    if (tickDuration > TickWarningThresholdMs)
-                    {
-                        Log.Warning("Tick took {TickDuration:F2}ms out of an expected {FixedDelta:F2}ms! Server might be overloaded.",
-                            tickDuration, fixedDelta * 1000);
-                        _metrics.TickOverruns.Add(1);
-                    }
-
-                    accumulator -= fixedDelta;
-                }
-
-                // Network polling
+                _performanceMonitor.BeginPollCycle();
                 _netManager.PollEvents();
-                Thread.Sleep(1); // Yield to OS
+                Thread.Sleep(1);
+                _performanceMonitor.EndPollCycle();
             }
 
             _netManager.Stop();
@@ -162,100 +97,94 @@ namespace AGX_Voice_Chat_Server
             _isRunning = false;
         }
 
-        private void BroadcastSnapshot()
+        private IEnumerable<NetPeer> OtherPeers(NetPeer? exclude)
         {
-            var snapshot = _world.GenerateSnapshot();
-            foreach (var peer in _peers.Keys)
+            foreach (var kv in _players)
             {
-                var writer = new NetDataWriter();
-                _packetProcessor.WriteNetSerializable(writer, ref snapshot);
-                if (writer.Length > 800)
-                    Log.Warning("Large snapshot packet: {Size} bytes (Players: {PlayerCount})", writer.Length, snapshot.Players.Length);
-                peer.Send(writer, DeliveryMethod.ReliableSequenced);
-                _metrics.RecordBytesSent(writer.Length);
-                _metrics.RecordPacketSent();
+                if (exclude != null && kv.Key == exclude)
+                    continue;
+                yield return kv.Key;
             }
         }
 
         private void OnJoinRequest(JoinRequestPacket packet, NetPeer peer)
         {
-            if (_peers.ContainsKey(peer))
+            if (_players.ContainsKey(peer))
             {
-                Log.Warning("Player {PlayerName} already joined! Ignoring duplicate join request.", packet.PlayerName);
+                Log.Warning("Duplicate join from {Address}, ignoring", peer.Address);
                 return;
             }
 
             var playerId = Guid.NewGuid();
-            Log.Information("Player {PlayerName} joining with ID {PlayerId}", packet.PlayerName, playerId);
+            var r = new Random();
+            float x = (float)(r.NextDouble() * 200 - 100);
+            float y = (float)(r.NextDouble() * 200 - 100);
+            float z = GroundLevel + 10f;
+            var spawnPos = new Vector3(x, y, z);
 
-            var random = new Random();
-            float spawnX = (float)(random.NextDouble() * 200 - 100);
-            float spawnY = (float)(random.NextDouble() * 200 - 100);
-            float terrainHeight = ServerWorld.GetTerrainHeight(spawnX, spawnY);
-            float spawnZ = terrainHeight + 10f;
-            var spawnPos = new Vector3(spawnX, spawnY, spawnZ);
-
-            Log.Information("Player {PlayerId} spawning at ({X:F1}, {Y:F1}, {Z:F1}), terrain height: {Height:F1}",
-                playerId, spawnX, spawnY, spawnZ, terrainHeight);
-
-            _world.AddPlayer(playerId, spawnPos, packet.PlayerName);
-            _peers[peer] = playerId;
+            var info = new PlayerInfo { Id = playerId, Name = packet.PlayerName ?? "Player", Position = spawnPos };
+            _players[peer] = info;
+            _peerToPlayerId[peer] = playerId;
 
             _metrics.RecordPlayerJoin();
 
+            Log.Information("Player {Name} joined as {PlayerId}", info.Name, playerId);
+
+            // Welcome the joining client
             var response = new JoinResponsePacket
             {
                 PlayerId = playerId,
                 SpawnPosition = spawnPos,
-                ServerTick = _world.CurrentTick
+                ServerTick = 0
             };
+            var w = new NetDataWriter();
+            _packetProcessor.WriteNetSerializable(w, ref response);
+            peer.Send(w, DeliveryMethod.ReliableOrdered);
 
-            var writer = new NetDataWriter();
-            _packetProcessor.WriteNetSerializable(writer, ref response);
-            peer.Send(writer, DeliveryMethod.ReliableOrdered);
-
-            BroadcastPlayerInfo(playerId, packet.PlayerName, 100);
-        }
-
-        /// <summary>
-        /// Broadcasts static player information to all connected clients.
-        /// This is sent separately from snapshots to reduce bandwidth.
-        /// </summary>
-        private void BroadcastPlayerInfo(Guid playerId, string name, int maxHealth)
-        {
+            // Tell everyone else "someone joined"
             var playerInfo = new PlayerInfoPacket
             {
                 PlayerId = playerId,
-                Name = name,
-                MaxHealth = maxHealth
+                Name = info.Name,
+                MaxHealth = 100
             };
-
-            var writer = new NetDataWriter();
-            _packetProcessor.WriteNetSerializable(writer, ref playerInfo);
-
-            foreach (var peer in _peers.Keys)
+            w = new NetDataWriter();
+            _packetProcessor.WriteNetSerializable(w, ref playerInfo);
+            foreach (var other in OtherPeers(peer))
             {
-                peer.Send(writer, DeliveryMethod.ReliableOrdered);
+                other.Send(w, DeliveryMethod.ReliableOrdered);
+                _metrics.RecordBytesSent(w.Length);
+                _metrics.RecordPacketSent();
             }
         }
 
         private void OnPlayerPosition(PlayerPositionPacket packet, NetPeer peer)
         {
-            if (_peers.TryGetValue(peer, out var playerId))
-                _world.SetPlayerPosition(playerId, packet.Position);
-            else
-                Log.Warning("Received position from unknown peer {PeerId}", peer.Id);
+            if (!_players.TryGetValue(peer, out var info))
+                return;
+
+            info.Position = packet.Position;
+
+            // Relay to everyone else (small packet per update)
+            var update = new PlayerPositionUpdatePacket { PlayerId = info.Id, Position = packet.Position };
+            var w = new NetDataWriter();
+            _packetProcessor.WriteNetSerializable(w, ref update);
+            foreach (var other in OtherPeers(peer))
+            {
+                other.Send(w, DeliveryMethod.Unreliable);
+                _metrics.RecordBytesSent(w.Length);
+                _metrics.RecordPacketSent();
+            }
         }
 
         private void OnPing(PingPacket packet, NetPeer peer)
         {
             var pong = new PongPacket { Timestamp = packet.Timestamp };
-            var writer = new NetDataWriter();
-            _packetProcessor.WriteNetSerializable(writer, ref pong);
-            peer.Send(writer, DeliveryMethod.Unreliable);
+            var w = new NetDataWriter();
+            _packetProcessor.WriteNetSerializable(w, ref pong);
+            peer.Send(w, DeliveryMethod.Unreliable);
         }
 
-        // INetEventListener implementation
         public void OnPeerConnected(NetPeer peer)
         {
             Log.Information("Client connected: {Address}", peer.Address);
@@ -265,30 +194,34 @@ namespace AGX_Voice_Chat_Server
         {
             Log.Information("Client disconnected: {Address}, Reason: {Reason}", peer.Address, disconnectInfo.Reason);
 
-            if (_peers.Remove(peer, out var playerId))
+            if (!_players.Remove(peer, out var info))
+                return;
+
+            _peerToPlayerId.Remove(peer);
+            _voiceModule.OnClientDisconnected(info.Id);
+            _metrics.RecordPlayerLeave();
+            _metrics.DisconnectsTotal.Add(1, new KeyValuePair<string, object?>("reason", disconnectInfo.Reason.ToString()));
+
+            // Tell everyone "this player left"
+            var left = new PlayerLeftPacket { PlayerId = info.Id };
+            var w = new NetDataWriter();
+            _packetProcessor.WriteNetSerializable(w, ref left);
+            foreach (var other in _players.Keys)
             {
-                _world.RemovePlayer(playerId);
-
-                // Notify voice module of disconnection
-                _voiceModule.OnClientDisconnected(playerId);
-
-                // Record player leave and disconnect metrics
-                _metrics.RecordPlayerLeave();
-                _metrics.DisconnectsTotal.Add(1, new KeyValuePair<string, object?>("reason", disconnectInfo.Reason.ToString()));
+                other.Send(w, DeliveryMethod.ReliableOrdered);
+                _metrics.RecordBytesSent(w.Length);
+                _metrics.RecordPacketSent();
             }
         }
 
         public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
         {
             Log.Error("Network error from {EndPoint}: {Error}", endPoint, socketError);
-
-            // Record error metric
             _metrics.ErrorsTotal.Add(1, new KeyValuePair<string, object?>("type", "network"), new KeyValuePair<string, object?>("subsystem", "network"));
         }
 
         public void OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
         {
-            // Record network metrics
             _metrics.RecordBytesReceived(reader.AvailableBytes);
             _metrics.RecordPacketReceived();
 
@@ -299,26 +232,13 @@ namespace AGX_Voice_Chat_Server
             }
             catch (ParseException)
             {
-                // This exception occurs if we receive a packet that hasn't been registered
-                // or if the packet data is malformed.
-                // Instead of crashing the server, we'll log a warning and notify the client.
-                Log.Error("Received invalid packet from {Peer}. Possible causes : \n" +
-                          "Using an outdated version of the game.\n" +
-                          "Packet is not registered in NetworkRegistration.RegisterTypes.\n" +
-                          "User is trying to cheat.", peer.Address);
-
-                // Record error metric
+                Log.Error("Invalid packet from {Address}", peer.Address);
                 _metrics.ErrorsTotal.Add(1, new KeyValuePair<string, object?>("type", "parse"), new KeyValuePair<string, object?>("subsystem", "network"));
             }
         }
 
-        public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
-        {
-        }
-
-        public void OnNetworkLatencyUpdate(NetPeer peer, int latency)
-        {
-        }
+        public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType) { }
+        public void OnNetworkLatencyUpdate(NetPeer peer, int latency) { }
 
         public void OnConnectionRequest(ConnectionRequest request)
         {

@@ -1,8 +1,11 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
-using AGH_Voice_Chat_Client.Game;
+using AGH_Voice_Chat_Shared;
 using AGH_Voice_Chat_Shared.Packets;
+using AGH_Voice_Chat_Shared.Packets.Join;
+using AGH_Voice_Chat_Shared.Packets.Ping;
+using AGH_Voice_Chat_Shared.Packets.Voice;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
@@ -79,8 +82,8 @@ namespace AGH.Voice.Scripts
             RegisterNested<JoinRequestPacket>();
             RegisterNested<JoinResponsePacket>();
             RegisterStub<PlayerPositionPacket>();
-            RegisterStub<WorldSnapshot>();
-            RegisterStub<PlayerState>();
+            RegisterStub<PlayerPositionUpdatePacket>();
+            RegisterStub<PlayerLeftPacket>();
             RegisterStub<PingPacket>();
             RegisterStub<PongPacket>();
             RegisterStub<PlayerInfoPacket>();

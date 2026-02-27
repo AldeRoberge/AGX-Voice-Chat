@@ -17,7 +17,7 @@ namespace AGX_Voice_Chat_Server
                 .MinimumLevel.Verbose()
                 .CreateLogger();
 
-                Log.Information("Starting AGH Voice Server...");
+            Log.Information("Starting AGX Voice Server...");
 
             try
             {
@@ -45,11 +45,13 @@ namespace AGX_Voice_Chat_Server
                 var app = builder.Build();
                 app.Urls.Add($"http://localhost:{MetricsPort}");
 
+                app.Map("/", () => "AGX Voice Server Metrics Endpoint");
+
                 // Map Prometheus scraping endpoint
                 app.MapPrometheusScrapingEndpoint();
 
-                Log.Information("Metrics endpoint available at http://localhost:{MetricsPort}/metrics", MetricsPort);
-                Log.Information("Voice server will start on port {VoicePort}", VoicePort);
+                Log.Information("Metrics HTTP endpoint available at {Url}.", $"http://localhost:{MetricsPort}/metrics");
+                Log.Information("Voice server (UDP) available on port {VoicePort}.", VoicePort);
 
                 app.Run();
             }

@@ -1,6 +1,5 @@
 using System.Numerics;
 using AGH_Voice_Chat_Shared;
-using AGH_Voice_Chat_Shared.Packets;
 using AGH_Voice_Chat_Shared.Packets.Join;
 using AGH_Voice_Chat_Shared.Packets.Ping;
 using AGH_Voice_Chat_Shared.Packets.Voice;
@@ -22,8 +21,8 @@ namespace AGH_Voice_Chat_Client.Game
             Register<JoinRequestPacket>(packetProcessor);
             Register<JoinResponsePacket>(packetProcessor);
             Register<PlayerPositionPacket>(packetProcessor);
-            Register<WorldSnapshot>(packetProcessor);
-            Register<PlayerState>(packetProcessor);
+            Register<PlayerPositionUpdatePacket>(packetProcessor);
+            Register<PlayerLeftPacket>(packetProcessor);
             Register<PingPacket>(packetProcessor);
             Register<PongPacket>(packetProcessor);
             Register<PlayerInfoPacket>(packetProcessor);

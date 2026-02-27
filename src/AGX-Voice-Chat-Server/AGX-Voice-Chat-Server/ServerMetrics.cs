@@ -4,7 +4,7 @@ using System.Diagnostics.Metrics;
 namespace AGX_Voice_Chat_Server
 {
     /// <summary>
-    /// Centralized OpenTelemetry metrics for the AGH server.
+    /// Centralized OpenTelemetry metrics for the AGX server.
     /// All metrics are thread-safe and designed for low-allocation, tick-safe operation.
     /// </summary>
     public class ServerMetrics : IDisposable

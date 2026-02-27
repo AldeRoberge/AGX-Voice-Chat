@@ -1,6 +1,6 @@
 using System;
-using AGH_Voice_Chat_Client.Game;
-using AGH_Voice_Chat_Shared.Packets;
+using AGH_Voice_Chat_Shared;
+using AGH_Voice_Chat_Shared.Packets.Voice;
 using LiteNetLib;
 using LiteNetLib.Utils;
 using UnityEngine;
