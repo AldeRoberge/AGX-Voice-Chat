@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="AGH-Voice-Chat-Client/AGH-Voice-Chat-Client.csproj" />
+  <Project Path="AGH-Voice-Chat-Shared/AGH-Voice-Chat-Shared.csproj" />
+  <Project Path="AGX-Voice-Chat-Server/AGX-Voice-Chat-Server.csproj" />
+</Solution>
