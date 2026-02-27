@@ -36,16 +36,16 @@ namespace AGH_VOice_Chat_Client
         public static ILogger ChatLog => _chatLog ?? Log.Logger;
 
         // Per-subsystem level switches for runtime toggling
-        public static readonly LoggingLevelSwitch LoggingLogSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch NetworkSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch ProjectileSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch WorldEditSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch ReconciliationSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch InterpolationSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch InputSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch ChunksSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch RenderingSwitch = new(LogEventLevel.Information);
-        public static readonly LoggingLevelSwitch ChatSwitch = new(LogEventLevel.Information);
+        public static readonly LoggingLevelSwitch LoggingLogSwitch = new();
+        public static readonly LoggingLevelSwitch NetworkSwitch = new();
+        public static readonly LoggingLevelSwitch ProjectileSwitch = new();
+        public static readonly LoggingLevelSwitch WorldEditSwitch = new();
+        public static readonly LoggingLevelSwitch ReconciliationSwitch = new();
+        public static readonly LoggingLevelSwitch InterpolationSwitch = new();
+        public static readonly LoggingLevelSwitch InputSwitch = new();
+        public static readonly LoggingLevelSwitch ChunksSwitch = new();
+        public static readonly LoggingLevelSwitch RenderingSwitch = new();
+        public static readonly LoggingLevelSwitch ChatSwitch = new();
 
         // Current player ID for enrichment
         private static Guid? _currentPlayerId;

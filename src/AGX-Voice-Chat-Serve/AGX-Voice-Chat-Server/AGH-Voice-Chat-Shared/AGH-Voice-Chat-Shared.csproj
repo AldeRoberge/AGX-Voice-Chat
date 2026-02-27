@@ -5,11 +5,26 @@
         <RootNamespace>AGH_Voice_Chat_Shared</RootNamespace>
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
+
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="LiteNetLib" Version="2.0.2" />
-      <PackageReference Include="MessagePack" Version="3.1.4" />
+        <PackageReference Include="LiteNetLib" Version="2.0.2"/>
+        <PackageReference Include="MessagePack" Version="3.1.4"/>
     </ItemGroup>
+
+    <PropertyGroup>
+        <!-- Unity project path relative to this .csproj (AGH-Website/AGH.Voice.Shared) -->
+        <UnityVoicePluginsPath>$(MSBuildThisFileDirectory)..\..\AGH-Unity\AGH-Unity-Voice-Chat\Assets\Plugins\AGH.Voice.Shared</UnityVoicePluginsPath>
+    </PropertyGroup>
+
+
+    <!-- Copy to the Unity folder -->
+    <Target Name="CopyToUnityPlugins" AfterTargets="Build" Condition="'$(TargetFramework)' == 'netstandard2.1'">
+        <MakeDir Directories="$(UnityVoicePluginsPath)" Condition="!Exists('$(UnityVoicePluginsPath)')"/>
+        <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(UnityVoicePluginsPath)" SkipUnchangedFiles="true"/>
+        <Message Importance="high" Text="Copied AGH.Voice.Shared.dll to Unity: $(UnityVoicePluginsPath)"/>
+    </Target>
+
 
 </Project>

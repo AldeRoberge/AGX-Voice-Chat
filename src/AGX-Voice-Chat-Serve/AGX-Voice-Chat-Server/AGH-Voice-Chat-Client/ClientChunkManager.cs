@@ -209,7 +209,7 @@ namespace AGH_VOice_Chat_Client
             int localX = blockX % SimulationConfig.ChunkSize;
             int localY = blockY % SimulationConfig.ChunkSize;
 
-            var chunk = GetChunk(chunkX, chunkY, 0);
+            var chunk = GetChunk(chunkX, chunkY);
             if (chunk == null)
                 return SimulationConfig.GroundLevel;
 
